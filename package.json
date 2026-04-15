@@ -1,0 +1,49 @@
+{
+  "name": "spagetiknot",
+  "displayName": "SpagetiKnot",
+  "description": "Visualize function call flows and event triggers across your codebase as an interactive graph",
+  "version": "0.0.1",
+  "publisher": "spagetiknot",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "spagetiknot.showFlowDiagram",
+        "title": "SpagetiKnot: Show Flow Diagram"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "spagetiknot.showFlowDiagram",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "spagetiknot.showFlowDiagram",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}
