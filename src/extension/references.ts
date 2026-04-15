@@ -1,18 +1,32 @@
+/**
+ * @module references
+ * @description Scans files for function call sites and builds caller→callee edges.
+ *
+ * ┌────────────────────────┬──────────────────────────────────────────────────┐
+ * │ Function               │ Role                                            │
+ * ├────────────────────────┼──────────────────────────────────────────────────┤
+ * │ findReferences         │ FunctionInfo[] → FlowEdge[].                    │
+ * │                        │ Called by: extension.ts (activate command)       │
+ * │ nodeId                 │ FunctionInfo → unique string ID for graph node. │
+ * │                        │ Called by: findReferences, webview.ts           │
+ * │ findEnclosingFunction  │ Resolves which function "owns" a given line.    │
+ * │                        │ Called by: findReferences (internal)            │
+ * │ escapeRegex            │ Escapes special regex characters in names.      │
+ * │                        │ Called by: findReferences (internal)            │
+ * │ deduplicateEdges       │ Removes duplicate source→target pairs.         │
+ * │                        │ Called by: findReferences (internal)            │
+ * └────────────────────────┴──────────────────────────────────────────────────┘
+ */
 import * as vscode from 'vscode';
 import { FunctionInfo } from './parser';
-
-export interface FunctionReference {
-  callerFile: string;
-  callerLine: number;
-  callerSnippet: string;
-  targetName: string;
-}
 
 export interface FlowEdge {
   source: string; // "filePath:line:functionName"
   target: string; // "filePath:line:functionName"
   callerFile: string;
   callerLine: number;
+  args: string[];       // arguments at the call site
+  params: string[];     // parameters of the target function
 }
 
 export async function findReferences(
@@ -80,11 +94,16 @@ export async function findReferences(
               ? nodeId(callerFn)
               : `${filePath}:${lineIdx}:<top-level>`;
 
+            // Extract call arguments from the line
+            const callArgs = extractCallArgs(line, callMatch.index);
+
             edges.push({
               source: sourceId,
               target: nodeId(target),
               callerFile: filePath,
               callerLine: lineIdx,
+              args: callArgs,
+              params: target.params,
             });
           }
         }
@@ -114,6 +133,39 @@ function findEnclosingFunction(
 
 export function nodeId(fn: FunctionInfo): string {
   return `${fn.filePath}:${fn.line}:${fn.name}`;
+}
+
+function extractCallArgs(line: string, matchStart: number): string[] {
+  const parenIdx = line.indexOf('(', matchStart);
+  if (parenIdx === -1) { return []; }
+  // Balanced paren extraction
+  let depth = 0;
+  let closeIdx = -1;
+  for (let i = parenIdx; i < line.length; i++) {
+    if (line[i] === '(') depth++;
+    if (line[i] === ')') depth--;
+    if (depth === 0) { closeIdx = i; break; }
+  }
+  if (closeIdx === -1) { return []; }
+  const inner = line.slice(parenIdx + 1, closeIdx).trim();
+  if (inner.length === 0) { return []; }
+
+  // Split on top-level commas only
+  const args: string[] = [];
+  let current = '';
+  let d = 0;
+  for (const ch of inner) {
+    if (ch === '(' || ch === '<' || ch === '[' || ch === '{') d++;
+    if (ch === ')' || ch === '>' || ch === ']' || ch === '}') d--;
+    if (ch === ',' && d === 0) {
+      args.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim().length > 0) args.push(current.trim());
+  return args;
 }
 
 function escapeRegex(str: string): string {

@@ -11,13 +11,13 @@
     "Visualization",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "spagetiknot.showFlowDiagram",
-        "title": "SpagetiKnot: Show Flow Diagram"
+        "title": "SSDF: SpagetiKnot Show Flow Diagram"
       }
     ],
     "menus": {
@@ -37,13 +37,18 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "tsc -p ./ && node esbuild.webview.mjs",
+    "compile:host": "tsc -p ./",
+    "compile:webview": "node esbuild.webview.mjs",
+    "watch:host": "tsc -watch -p ./",
+    "watch:webview": "node esbuild.webview.mjs --watch",
+    "watch": "npm run watch:host & npm run watch:webview",
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.3.3"
   }
 }

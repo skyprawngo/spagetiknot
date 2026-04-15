@@ -5,11 +5,12 @@
     "outDir": "out",
     "lib": ["ES2022"],
     "sourceMap": true,
-    "rootDir": "src",
+    "rootDir": "src/extension",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
+  "include": ["src/extension/**/*"],
   "exclude": ["node_modules", ".vscode-test"]
 }
