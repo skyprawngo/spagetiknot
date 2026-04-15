@@ -3,7 +3,7 @@ import {
   GROUP_PAD, GROUP_HEADER, GROUP_BTN_SIZE,
 } from './state';
 import { colorForFile } from './colors';
-import { routeAllEdges, computeAllPads, RoutedEdge, Pad } from './routing';
+import { routeAllEdges, routeGroupEdges, computeAllPads, RoutedEdge, Pad } from './routing';
 
 let ctx: CanvasRenderingContext2D;
 let canvasEl: HTMLCanvasElement;
@@ -54,6 +54,22 @@ export function draw(): void {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillText(g.fileName, g.x + 12, g.y + GROUP_HEADER / 2);
+
+    // Route debug button (left of layout button)
+    const routeBtnX = g.x + g.w - (GROUP_BTN_SIZE + 6) * 2;
+    const routeBtnY = g.y + 6;
+    const hasRouteDebug = state.debugRoutedGroups?.has(g.fileName);
+    ctx.fillStyle = hasRouteDebug ? 'rgba(76,175,80,0.2)' : 'rgba(255,255,255,0.08)';
+    ctx.strokeStyle = hasRouteDebug ? '#4caf50' : color;
+    ctx.lineWidth = 0.8;
+    roundRect(routeBtnX, routeBtnY, GROUP_BTN_SIZE, GROUP_BTN_SIZE, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = hasRouteDebug ? '#4caf50' : color;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('R', routeBtnX + GROUP_BTN_SIZE / 2, routeBtnY + GROUP_BTN_SIZE / 2);
 
     // Layout toggle button
     const btnX = g.x + g.w - GROUP_BTN_SIZE - 6;

@@ -7,6 +7,9 @@
  *   - Route traces between pads using H/V/45° segments
  *   - Avoid routing through other node bounding boxes
  *   - Align parallel traces with consistent offset
+ *
+ * NOTE: Full grid-based routing (per 트레이스라우팅전략.md) is pending implementation.
+ *       Old group-boundary routing has been removed.
  */
 
 import { state, GraphNode, GraphEdge, NODE_H } from './state';
@@ -34,8 +37,6 @@ export interface RoutedEdge {
 // ============================================================
 
 const PAD_MIN_SPACING = 10;
-const PAD_STUB_LEN = 16;
-const TRACE_OFFSET = 5;  // parallel trace spacing
 
 /** Compute how many pads fit on a given side length */
 function maxPadsOnSide(sideLen: number): number {
@@ -150,26 +151,51 @@ function allocatePads(node: GraphNode, count: number, direction: 'in' | 'out'): 
 }
 
 // ============================================================
-//  TRACE ROUTING
+//  STUB: Grid-based trace routing (TODO)
 // ============================================================
 
 /**
- * Route all edges. In artwork mode, traces route around group boundaries
- * so they never cross over function nodes.
+ * Route all edges for a single file group (Phase 1 — local grid).
+ * Currently a stub that returns straight pad-to-pad lines.
  */
-export function routeAllEdges(): RoutedEdge[] {
+export function routeGroupEdges(groupFileName: string): RoutedEdge[] {
   const padMap = computeAllPads();
-  const { nodes, edges, fileGroups } = state;
+  const { nodes, edges } = state;
   const nodeMap = new Map<string, GraphNode>();
   nodes.forEach(n => nodeMap.set(n.id, n));
 
-  // Group edges by target for parallel offset
-  const edgesByTarget = new Map<string, number[]>();
+  const routed: RoutedEdge[] = [];
+
   for (let ei = 0; ei < edges.length; ei++) {
     const e = edges[ei];
-    if (!edgesByTarget.has(e.target)) edgesByTarget.set(e.target, []);
-    edgesByTarget.get(e.target)!.push(ei);
+    const srcNode = nodeMap.get(e.source);
+    const tgtNode = nodeMap.get(e.target);
+    if (!srcNode || !tgtNode) continue;
+
+    // Only internal edges for this group
+    if (srcNode.fileName !== groupFileName || tgtNode.fileName !== groupFileName) continue;
+
+    const pads = padMap.get(ei);
+    if (!pads) continue;
+    const { sourcePad, targetPad } = pads;
+
+    // Stub: straight line from pad to pad
+    const path: [number, number][] = [[sourcePad.x, sourcePad.y], [targetPad.x, targetPad.y]];
+    routed.push({ edgeIdx: ei, path, sourcePad, targetPad });
   }
+
+  return routed;
+}
+
+/**
+ * Route all edges (both internal and external).
+ * Currently a stub that returns straight pad-to-pad lines.
+ */
+export function routeAllEdges(): RoutedEdge[] {
+  const padMap = computeAllPads();
+  const { nodes, edges } = state;
+  const nodeMap = new Map<string, GraphNode>();
+  nodes.forEach(n => nodeMap.set(n.id, n));
 
   const routed: RoutedEdge[] = [];
 
@@ -178,156 +204,10 @@ export function routeAllEdges(): RoutedEdge[] {
     if (!pads) continue;
     const { sourcePad, targetPad } = pads;
 
-    const siblings = edgesByTarget.get(edges[ei].target) || [ei];
-    const sibIdx = siblings.indexOf(ei);
-    const sibCount = siblings.length;
-    const parallelOffset = (sibIdx - (sibCount - 1) / 2) * TRACE_OFFSET;
-
-    const srcNode = nodeMap.get(edges[ei].source);
-    const tgtNode = nodeMap.get(edges[ei].target);
-    if (!srcNode || !tgtNode) continue;
-
-    const srcGroup = fileGroups.find(g => g.fileName === srcNode.fileName);
-    const tgtGroup = fileGroups.find(g => g.fileName === tgtNode.fileName);
-
-    const path = routeTrace(sourcePad, targetPad, srcNode, tgtNode, srcGroup, tgtGroup, parallelOffset);
+    // Stub: straight line from pad to pad
+    const path: [number, number][] = [[sourcePad.x, sourcePad.y], [targetPad.x, targetPad.y]];
     routed.push({ edgeIdx: ei, path, sourcePad, targetPad });
   }
 
   return routed;
-}
-
-const CHANNEL_MARGIN = 12; // clearance outside group boundaries
-
-/**
- * Route from source pad to target pad by traveling along group boundaries.
- *
- * Strategy:
- *   1. Exit source pad → go to source group boundary edge
- *   2. Travel along the outside of groups (channel space)
- *   3. Enter target group boundary → arrive at target pad
- *
- * This guarantees traces never cross over function nodes.
- */
-function routeTrace(
-  src: Pad, tgt: Pad,
-  srcNode: GraphNode, tgtNode: GraphNode,
-  srcGroup: any, tgtGroup: any,
-  offset: number
-): [number, number][] {
-
-  if (!srcGroup || !tgtGroup) {
-    return [[src.x, src.y], [tgt.x, tgt.y]];
-  }
-
-  const sameGroup = srcGroup === tgtGroup;
-
-  // Channel X positions: just outside group left/right edges
-  const srcRightCh = srcGroup.x + srcGroup.w + CHANNEL_MARGIN + Math.abs(offset);
-  const srcLeftCh = srcGroup.x - CHANNEL_MARGIN - Math.abs(offset);
-  const tgtRightCh = tgtGroup.x + tgtGroup.w + CHANNEL_MARGIN + Math.abs(offset);
-  const tgtLeftCh = tgtGroup.x - CHANNEL_MARGIN - Math.abs(offset);
-
-  // Channel Y positions
-  const srcTopCh = srcGroup.y - CHANNEL_MARGIN - Math.abs(offset);
-  const srcBotCh = srcGroup.y + srcGroup.h + CHANNEL_MARGIN + Math.abs(offset);
-  const tgtTopCh = tgtGroup.y - CHANNEL_MARGIN - Math.abs(offset);
-  const tgtBotCh = tgtGroup.y + tgtGroup.h + CHANNEL_MARGIN + Math.abs(offset);
-
-  const points: [number, number][] = [[src.x, src.y]];
-
-  if (sameGroup) {
-    // Same group: route outside the group perimeter
-    // Exit from pad side → group boundary → travel vertically → re-enter
-    if (src.side === 'right' && tgt.side === 'left') {
-      // Right out, go around group right edge, come back in from left
-      const chX = srcRightCh + offset;
-      points.push([chX, src.y]);
-      points.push([chX, tgt.y]);
-    } else if (src.side === 'left' && tgt.side === 'right') {
-      const chX = srcLeftCh + offset;
-      points.push([chX, src.y]);
-      points.push([chX, tgt.y]);
-    } else if (src.side === 'right' && tgt.side === 'right') {
-      const chX = srcRightCh + offset;
-      points.push([chX, src.y]);
-      points.push([chX, tgt.y]);
-    } else if (src.side === 'left' && tgt.side === 'left') {
-      const chX = srcLeftCh + offset;
-      points.push([chX, src.y]);
-      points.push([chX, tgt.y]);
-    } else if (src.side === 'bottom' || src.side === 'top') {
-      const chY = src.side === 'bottom' ? srcBotCh + offset : srcTopCh + offset;
-      points.push([src.x, chY]);
-      points.push([tgt.x, chY]);
-    } else {
-      // Fallback
-      const chX = srcRightCh + offset;
-      points.push([chX, src.y]);
-      points.push([chX, tgt.y]);
-    }
-  } else {
-    // Different groups: route through inter-group channel space
-    // Determine relative positions
-    const srcCx = srcGroup.x + srcGroup.w / 2;
-    const tgtCx = tgtGroup.x + tgtGroup.w / 2;
-    const tgtIsRight = tgtCx > srcCx;
-
-    if (src.side === 'right' || src.side === 'left') {
-      // Exit horizontally from source
-      const exitX = src.side === 'right' ? srcRightCh : srcLeftCh;
-      points.push([exitX + offset, src.y]);
-
-      if (tgt.side === 'left' || tgt.side === 'right') {
-        // Enter horizontally into target
-        const enterX = tgt.side === 'left' ? tgtLeftCh : tgtRightCh;
-
-        // Need to travel from exitX to enterX, and from src.y to tgt.y
-        // Use the inter-group space: go horizontal midpoint, then vertical, then horizontal
-        const midX = (exitX + enterX) / 2 + offset;
-
-        if (Math.abs(src.y - tgt.y) < 3) {
-          // Same Y level — straight horizontal
-          points.push([enterX + offset, tgt.y]);
-        } else {
-          points.push([midX, src.y]);
-          points.push([midX, tgt.y]);
-          points.push([enterX + offset, tgt.y]);
-        }
-      } else {
-        // Target pad is top/bottom
-        const enterY = tgt.side === 'top' ? tgtTopCh : tgtBotCh;
-        points.push([exitX + offset, enterY + offset]);
-        points.push([tgt.x, enterY + offset]);
-      }
-    } else {
-      // Source pad is top/bottom
-      const exitY = src.side === 'top' ? srcTopCh : srcBotCh;
-      points.push([src.x, exitY + offset]);
-
-      if (tgt.side === 'left' || tgt.side === 'right') {
-        const enterX = tgt.side === 'left' ? tgtLeftCh : tgtRightCh;
-        points.push([enterX + offset, exitY + offset]);
-        points.push([enterX + offset, tgt.y]);
-      } else {
-        const enterY = tgt.side === 'top' ? tgtTopCh : tgtBotCh;
-        points.push([tgt.x, exitY + offset]);
-      }
-    }
-  }
-
-  points.push([tgt.x, tgt.y]);
-  return deduplicatePath(points);
-}
-
-function deduplicatePath(path: [number, number][]): [number, number][] {
-  if (path.length === 0) return path;
-  const result: [number, number][] = [path[0]];
-  for (let i = 1; i < path.length; i++) {
-    const prev = result[result.length - 1];
-    if (Math.abs(path[i][0] - prev[0]) > 0.5 || Math.abs(path[i][1] - prev[1]) > 0.5) {
-      result.push(path[i]);
-    }
-  }
-  return result;
 }

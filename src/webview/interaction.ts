@@ -5,9 +5,10 @@ import {
   saveCustomSnapshot,
 } from './layout';
 import {
-  hitTestNode, hitTestGroupHeader, hitTestGroupBtn,
+  hitTestNode, hitTestGroupHeader, hitTestGroupBtn, hitTestGroupRouteBtn,
   hitTestGroupResize, hitTestEdge, getResizeCursor, screenToWorld,
 } from './hitTest';
+import { routeGroupEdges } from './routing';
 import { showEdgeInfo, hideEdgeInfo } from './dashboard';
 import { postMessage } from './messaging';
 
@@ -74,6 +75,25 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
     }
 
     if (e.button !== 0) return;
+
+    // Group route debug button
+    const routeBtnG = hitTestGroupRouteBtn(w.x, w.y);
+    if (routeBtnG) {
+      const fileName = routeBtnG.fileName;
+      if (state.debugRoutedGroups.has(fileName)) {
+        state.debugRoutedGroups.delete(fileName);
+      } else {
+        state.debugRoutedGroups.add(fileName);
+      }
+      // Run per-group routing and merge into cached routes
+      const allDebugRoutes: any[] = [];
+      for (const gn of state.debugRoutedGroups) {
+        allDebugRoutes.push(...routeGroupEdges(gn));
+      }
+      state.cachedRoutes = allDebugRoutes.length > 0 ? allDebugRoutes : null;
+      draw();
+      return;
+    }
 
     // Group layout button
     const btnG = hitTestGroupBtn(w.x, w.y);
@@ -230,6 +250,9 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
     // Cursor logic
     const rh = hitTestGroupResize(w.x, w.y);
     if (rh) { canvas.style.cursor = getResizeCursor(rh.edge); if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
+
+    const routeBtnG2 = hitTestGroupRouteBtn(w.x, w.y);
+    if (routeBtnG2) { canvas.style.cursor = 'pointer'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
 
     const btnG = hitTestGroupBtn(w.x, w.y);
     if (btnG) { canvas.style.cursor = 'pointer'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }

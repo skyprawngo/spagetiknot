@@ -61,6 +61,7 @@ export const state = {
   selectedEdgeIdx: -1,
   artworkLineMode: false,
   cachedRoutes: null as any[] | null,  // RoutedEdge[] cache for hit-test
+  debugRoutedGroups: new Set<string>(),  // groups with debug routing active
 
   // Group resize
   resizingGroup: null as FileGroup | null,

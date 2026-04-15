@@ -24,6 +24,15 @@ export function hitTestGroupBtn(wx: number, wy: number): FileGroup | null {
   return null;
 }
 
+export function hitTestGroupRouteBtn(wx: number, wy: number): FileGroup | null {
+  for (const g of state.fileGroups) {
+    const bx = g.x + g.w - (GROUP_BTN_SIZE + 6) * 2;
+    const by = g.y + 6;
+    if (wx >= bx && wx <= bx + GROUP_BTN_SIZE && wy >= by && wy <= by + GROUP_BTN_SIZE) return g;
+  }
+  return null;
+}
+
 export function hitTestGroupResize(wx: number, wy: number): { group: FileGroup; edge: string } | null {
   for (const g of state.fileGroups) {
     const onR = Math.abs(wx - (g.x + g.w)) < RESIZE_MARGIN && wy >= g.y && wy <= g.y + g.h;
