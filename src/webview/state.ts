@@ -7,6 +7,7 @@ export interface GraphNode {
   fileName: string;
   line: number;
   params: string[];
+  comment: string;
   x: number;
   y: number;
   w: number;
@@ -61,6 +62,7 @@ export const state = {
   selectedEdgeIdx: -1,
   artworkLineMode: false,
   cachedRoutes: null as any[] | null,  // RoutedEdge[] cache for hit-test
+  cachedPads: null as Map<number, { sourcePad: any; targetPad: any }> | null,
   debugRoutedGroups: new Set<string>(),  // groups with debug routing active
 
   // Group resize
@@ -95,8 +97,9 @@ export const state = {
 };
 
 // Layout constants
-export const NODE_W = 160;
-export const NODE_H = 44;
+export const NODE_W     = 140; // minimum / fallback width
+export const NODE_W_MAX = 400; // maximum width (very long names capped here)
+export const NODE_H     = 36;  // single-row height (filename row removed)
 export const GROUP_PAD = 16;
 export const GROUP_HEADER = 30;
 export const GROUP_GAP_X = 40;

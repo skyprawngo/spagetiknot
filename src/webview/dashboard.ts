@@ -1,8 +1,10 @@
 import { state, GraphNode } from './state';
 import { draw } from './canvas';
-import { applyGlobalLayout, applyStackerLayout, fitToScreen, restoreCustomSnapshot, layoutNodesInGroup } from './layout';
+import { applyGlobalLayout, applyStackerLayout, applyMultiRowStackerLayout, fitToScreen, restoreCustomSnapshot, layoutNodesInGroup } from './layout';
 import { colorForFile } from './colors';
-import { requestSaveLayout } from './messaging';
+import { postMessage, requestSaveLayout } from './messaging';
+
+export type LayoutMeta = { name: string; targetDir: string; savedAt: string };
 
 export function showEdgeInfo(ei: number, screenX: number, screenY: number): void {
   const e = state.edges[ei];
@@ -82,7 +84,9 @@ export function setupDashboard(): void {
   document.getElementById('btn-single')!.addEventListener('click', () => { applyGlobalLayout(1); draw(); });
   document.getElementById('btn-horizontal')!.addEventListener('click', () => { applyGlobalLayout(0); draw(); });
   document.getElementById('btn-compact')!.addEventListener('click', () => { applyGlobalLayout(-1); draw(); });
-  document.getElementById('btn-stacker')!.addEventListener('click', () => { applyStackerLayout(); draw(); });
+  document.getElementById('btn-stacker')!.addEventListener('click',   () => { applyStackerLayout(); draw(); });
+  document.getElementById('btn-stacker3')!.addEventListener('click', () => { applyMultiRowStackerLayout(3); draw(); });
+  document.getElementById('btn-stacker4')!.addEventListener('click', () => { applyMultiRowStackerLayout(4); draw(); });
   document.getElementById('btn-custom')!.addEventListener('click', () => { restoreCustomSnapshot(); draw(); });
   document.getElementById('btn-fit')!.addEventListener('click', () => { fitToScreen(); draw(); });
   document.getElementById('btn-reset')!.addEventListener('click', () => {
@@ -101,13 +105,11 @@ export function setupDashboard(): void {
     draw();
   });
 
-  // Save layout button
+  // Save layout button — auto-generates a name, no input needed
   document.getElementById('btn-save-layout')!.addEventListener('click', () => {
-    const input = document.getElementById('layout-name-input') as HTMLInputElement;
-    const name = input.value.trim();
-    if (!name) return;
+    const existing = document.querySelectorAll('#dash-saved-layouts .dash-layout-item');
+    const name = 'Layout ' + (existing.length + 1);
     requestSaveLayout(name);
-    input.value = '';
   });
 }
 
@@ -126,5 +128,65 @@ export function updateFileList(): void {
     li.appendChild(dot);
     li.appendChild(document.createTextNode(n.fileName + ' (' + count + ')'));
     listEl.appendChild(li);
+  }
+}
+
+/**
+ * Render the saved-layout list inside the floating Dashboard panel.
+ * Supports inline rename (double-click) and single-click to load.
+ */
+export function renderDashSavedLayouts(layouts: LayoutMeta[]): void {
+  const el = document.getElementById('dash-saved-layouts');
+  if (!el) return;
+  el.innerHTML = '';
+
+  for (const l of layouts) {
+    const item = document.createElement('div');
+    item.className = 'dash-layout-item';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'dash-layout-name';
+    nameSpan.textContent = l.name;
+
+    nameSpan.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.className = 'dash-layout-rename-input';
+      input.value = l.name;
+      nameSpan.replaceWith(input);
+      input.focus();
+      input.select();
+
+      const commit = () => {
+        const newName = input.value.trim();
+        if (newName && newName !== l.name) {
+          postMessage({ command: 'renameLayout', oldName: l.name, newName });
+        } else {
+          input.replaceWith(nameSpan);
+        }
+      };
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter')  { ev.preventDefault(); commit(); }
+        if (ev.key === 'Escape') { input.replaceWith(nameSpan); }
+      });
+      input.addEventListener('blur', commit);
+    });
+
+    item.addEventListener('click', () => {
+      if (item.querySelector('.dash-layout-rename-input')) return;
+      postMessage({ command: 'loadLayout', name: l.name });
+    });
+
+    const del = document.createElement('span');
+    del.className = 'del';
+    del.textContent = '\u00d7';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      postMessage({ command: 'deleteLayout', name: l.name });
+    });
+
+    item.appendChild(nameSpan);
+    item.appendChild(del);
+    el.appendChild(item);
   }
 }

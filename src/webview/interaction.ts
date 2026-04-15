@@ -1,5 +1,5 @@
 import { state, NODE_W, NODE_H, GROUP_PAD, GROUP_HEADER, NODE_GAP } from './state';
-import { draw, resizeCanvas } from './canvas';
+import { draw, scheduleDraw, resizeCanvas } from './canvas';
 import {
   layoutNodesInGroup, resolveGroupOverlaps, expandGroupToFitNode,
   saveCustomSnapshot,
@@ -8,9 +8,16 @@ import {
   hitTestNode, hitTestGroupHeader, hitTestGroupBtn, hitTestGroupRouteBtn,
   hitTestGroupResize, hitTestEdge, getResizeCursor, screenToWorld,
 } from './hitTest';
-import { routeGroupEdges } from './routing';
 import { showEdgeInfo, hideEdgeInfo } from './dashboard';
 import { postMessage } from './messaging';
+import { show as showNodeContext, hide as hideNodeContext } from './nodeContext';
+import { colorForFile, setFileColor } from './colors';
+
+/** Invalidate artwork routing cache — call whenever node/group positions change */
+function invalidateRouteCache(): void {
+  state.cachedRoutes = null;
+  state.cachedPads = null;
+}
 
 function isInMultiSelection(wx: number, wy: number): boolean {
   const hit = hitTestNode(wx, wy);
@@ -64,6 +71,23 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
   canvas.addEventListener('mousedown', (e) => {
     const w = screenToWorld(e.offsetX, e.offsetY);
 
+    // Cmd+클릭: 경로 복사
+    if (e.metaKey && e.button === 0) {
+      const hit = hitTestNode(w.x, w.y);
+      if (hit) {
+        // 함수 노드: 파일 경로 + 함수명 복사
+        postMessage({ command: 'copyToClipboard', text: `${hit.file}:${hit.label}` });
+        return;
+      }
+      const gh = hitTestGroupHeader(w.x, w.y);
+      if (gh) {
+        // 파일 그룹 헤더: 파일 경로만 복사
+        const node = state.nodes.find(n => n.fileName === gh.fileName);
+        if (node) postMessage({ command: 'copyToClipboard', text: node.file });
+        return;
+      }
+    }
+
     // Middle click: pan
     if (e.button === 1) {
       e.preventDefault();
@@ -76,22 +100,10 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
 
     if (e.button !== 0) return;
 
-    // Group route debug button
+    // Color palette button
     const routeBtnG = hitTestGroupRouteBtn(w.x, w.y);
     if (routeBtnG) {
-      const fileName = routeBtnG.fileName;
-      if (state.debugRoutedGroups.has(fileName)) {
-        state.debugRoutedGroups.delete(fileName);
-      } else {
-        state.debugRoutedGroups.add(fileName);
-      }
-      // Run per-group routing and merge into cached routes
-      const allDebugRoutes: any[] = [];
-      for (const gn of state.debugRoutedGroups) {
-        allDebugRoutes.push(...routeGroupEdges(gn));
-      }
-      state.cachedRoutes = allDebugRoutes.length > 0 ? allDebugRoutes : null;
-      draw();
+      openColorPicker(routeBtnG.fileName);
       return;
     }
 
@@ -103,7 +115,8 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       state.groupLayoutModes.set(btnG.fileName, next);
       layoutNodesInGroup(btnG);
       resolveGroupOverlaps(btnG);
-      draw();
+      invalidateRouteCache();
+      scheduleDraw();
       return;
     }
 
@@ -142,13 +155,22 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
     if (hit) {
       clearMultiSelection();
       hideEdgeInfo();
-      state.selectedNode = (state.selectedNode === hit) ? null : hit;
       state.selectedEdgeIdx = -1;
+      if (state.selectedNode === hit) {
+        // Already selected — show popover, keep selected, no drag
+        // stopPropagation prevents the document-level "outside click" listener
+        // in nodeContext from immediately closing the popover we just opened.
+        e.stopPropagation();
+        showNodeContext(hit, e.clientX, e.clientY);
+        scheduleDraw();
+        return;
+      }
+      state.selectedNode = hit;
       state.dragNode = hit;
       hit._dx = w.x - hit.x;
       hit._dy = w.y - hit.y;
       hit._moved = false;
-      draw();
+      scheduleDraw();
       return;
     }
 
@@ -159,7 +181,7 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       state.selectedNode = null;
       state.selectedEdgeIdx = ei;
       showEdgeInfo(ei, e.clientX, e.clientY);
-      draw();
+      scheduleDraw();
       return;
     }
 
@@ -173,7 +195,7 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
     state.rectStartWy = w.y;
     state.rectCurWx = w.x;
     state.rectCurWy = w.y;
-    draw();
+    scheduleDraw();
   });
 
   canvas.addEventListener('mousemove', (e) => {
@@ -182,14 +204,16 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
     if (state.panning) {
       state.offsetX = e.offsetX - state.panStartX;
       state.offsetY = e.offsetY - state.panStartY;
-      draw(); return;
+      scheduleDraw();
+      return;
     }
 
     if (state.rectSelecting) {
       state.rectCurWx = w.x;
       state.rectCurWy = w.y;
       computeRectSelection();
-      draw(); return;
+      scheduleDraw();
+      return;
     }
 
     if (state.batchDragging) {
@@ -214,7 +238,9 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
           }
         }
       }
-      draw(); return;
+      invalidateRouteCache();
+      scheduleDraw();
+      return;
     }
 
     if (state.resizingGroup) {
@@ -225,7 +251,9 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
         state.resizingGroup.w = Math.max(minW, state.resizeOrigW + dx);
       if (state.resizeEdge === 'bottom' || state.resizeEdge === 'corner')
         state.resizingGroup.h = Math.max(minH, state.resizeOrigH + dy);
-      draw(); return;
+      invalidateRouteCache();
+      scheduleDraw();
+      return;
     }
 
     if (state.draggingGroup) {
@@ -236,7 +264,9 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       for (const n of state.nodes) {
         if (n.fileName === state.draggingGroup.fileName) { n.x += dx; n.y += dy; }
       }
-      draw(); return;
+      invalidateRouteCache();
+      scheduleDraw();
+      return;
     }
 
     if (state.dragNode) {
@@ -244,34 +274,59 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       state.dragNode.x = w.x - (state.dragNode._dx || 0);
       state.dragNode.y = w.y - (state.dragNode._dy || 0);
       expandGroupToFitNode(state.dragNode);
-      draw(); return;
+      invalidateRouteCache();
+      scheduleDraw();
+      return;
     }
 
     // Cursor logic
     const rh = hitTestGroupResize(w.x, w.y);
-    if (rh) { canvas.style.cursor = getResizeCursor(rh.edge); if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
+    if (rh) {
+      canvas.style.cursor = getResizeCursor(rh.edge);
+      if (state.hoveredNode) { state.hoveredNode = null; scheduleDraw(); }
+      return;
+    }
 
     const routeBtnG2 = hitTestGroupRouteBtn(w.x, w.y);
-    if (routeBtnG2) { canvas.style.cursor = 'pointer'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
+    if (routeBtnG2) {
+      canvas.style.cursor = 'pointer';
+      if (state.hoveredNode) { state.hoveredNode = null; scheduleDraw(); }
+      return;
+    }
 
     const btnG = hitTestGroupBtn(w.x, w.y);
-    if (btnG) { canvas.style.cursor = 'pointer'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
+    if (btnG) {
+      canvas.style.cursor = 'pointer';
+      if (state.hoveredNode) { state.hoveredNode = null; scheduleDraw(); }
+      return;
+    }
 
     const gh = hitTestGroupHeader(w.x, w.y);
-    if (gh && !hitTestNode(w.x, w.y)) { canvas.style.cursor = 'grab'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return; }
+    if (gh && !hitTestNode(w.x, w.y)) {
+      canvas.style.cursor = 'grab';
+      if (state.hoveredNode) { state.hoveredNode = null; scheduleDraw(); }
+      return;
+    }
 
     if ((state.selectedNodes.size > 0 || state.selectedGroupNames.size > 0) && isInMultiSelection(w.x, w.y)) {
-      canvas.style.cursor = 'move'; if (state.hoveredNode) { state.hoveredNode = null; draw(); } return;
+      canvas.style.cursor = 'move';
+      if (state.hoveredNode) { state.hoveredNode = null; scheduleDraw(); }
+      return;
     }
 
     const hit = hitTestNode(w.x, w.y);
-    if (hit !== state.hoveredNode) { state.hoveredNode = hit; canvas.style.cursor = hit ? 'pointer' : 'default'; draw(); return; }
+    if (hit !== state.hoveredNode) {
+      state.hoveredNode = hit;
+      canvas.style.cursor = hit ? 'pointer' : 'default';
+      scheduleDraw();
+      return;
+    }
     if (!hit) { canvas.style.cursor = 'crosshair'; }
   });
 
   canvas.addEventListener('mouseup', () => {
     if (state.panning) { state.panning = false; canvas.style.cursor = 'default'; return; }
-    if (state.rectSelecting) { state.rectSelecting = false; computeRectSelection(); draw(); return; }
+    if (state.rectSelecting) { state.rectSelecting = false; computeRectSelection(); scheduleDraw(); return; }
     if (state.batchDragging) { state.batchDragging = false; saveCustomSnapshot(); return; }
 
     const didMoveNode = state.dragNode && state.dragNode._moved;
@@ -283,8 +338,20 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
   });
 
   canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  // 우클릭 → 코드 바로가기
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const w = screenToWorld(e.offsetX, e.offsetY);
+    const hit = hitTestNode(w.x, w.y);
+    if (hit) {
+      postMessage({ command: 'openFile', filePath: hit.file, line: hit.line });
+    } else {
+      hideNodeContext();
+    }
+  });
+
+  // 더블클릭 → 노드면 팝오버, 그룹 헤더면 줌
   canvas.addEventListener('dblclick', (e) => {
     const w = screenToWorld(e.offsetX, e.offsetY);
     const gh = hitTestGroupHeader(w.x, w.y);
@@ -294,29 +361,77 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       state.scale = Math.max(0.2, targetScale);
       state.offsetX = state.width / 2 - (gh.x + gh.w / 2) * state.scale;
       state.offsetY = state.height / 2 - (gh.y + gh.h / 2) * state.scale;
-      draw(); return;
+      scheduleDraw();
+      return;
     }
     const hit = hitTestNode(w.x, w.y);
-    if (hit) { postMessage({ command: 'openFile', filePath: hit.file, line: hit.line }); }
+    if (hit) {
+      state.selectedNode = hit; // keep node selected after double-click toggle
+      showNodeContext(hit, e.clientX, e.clientY);
+      scheduleDraw();
+    }
   });
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const zf = e.deltaY < 0 ? 1.1 : 0.9;
-    const wx = (e.offsetX - state.offsetX) / state.scale;
-    const wy = (e.offsetY - state.offsetY) / state.scale;
-    state.scale *= zf;
-    state.scale = Math.max(0.1, Math.min(5, state.scale));
-    state.offsetX = e.offsetX - wx * state.scale;
-    state.offsetY = e.offsetY - wy * state.scale;
-    draw();
+    if (e.ctrlKey) {
+      // 핀치 줌 (터치패드): deltaY가 픽셀 단위 소수로 연속 발생하므로
+      // 고정 배율 대신 deltaY 크기에 비례한 연속 줌 적용
+      const zf = Math.pow(0.994, e.deltaY);
+      const wx = (e.offsetX - state.offsetX) / state.scale;
+      const wy = (e.offsetY - state.offsetY) / state.scale;
+      state.scale *= zf;
+      state.scale = Math.max(0.1, Math.min(5, state.scale));
+      state.offsetX = e.offsetX - wx * state.scale;
+      state.offsetY = e.offsetY - wy * state.scale;
+    } else if (e.deltaMode === 0 && (e.deltaX !== 0 || Math.abs(e.deltaY) < 50)) {
+      // 두 손가락 스크롤 패닝 (터치패드: deltaMode=0, 픽셀 단위 작은 값)
+      state.offsetX -= e.deltaX;
+      state.offsetY -= e.deltaY;
+    } else {
+      // 마우스 휠 줌 (단계적 고정 배율)
+      const zf = e.deltaY < 0 ? 1.06 : 0.94;
+      const wx = (e.offsetX - state.offsetX) / state.scale;
+      const wy = (e.offsetY - state.offsetY) / state.scale;
+      state.scale *= zf;
+      state.scale = Math.max(0.1, Math.min(5, state.scale));
+      state.offsetX = e.offsetX - wx * state.scale;
+      state.offsetY = e.offsetY - wy * state.scale;
+    }
+    scheduleDraw();
   }, { passive: false });
 
   const searchInput = document.getElementById('search') as HTMLInputElement;
   searchInput.addEventListener('input', () => {
     state.searchTerm = searchInput.value.toLowerCase();
-    draw();
+    scheduleDraw();
   });
 
-  window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+  window.addEventListener('resize', () => { resizeCanvas(); scheduleDraw(); });
+}
+
+/** Open the OS/browser native color picker for a file group. */
+function openColorPicker(fileName: string): void {
+  const current = colorForFile(fileName);
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = current;
+  // Keep it invisible but in the DOM so the browser can open its native picker
+  input.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:0;height:0;';
+  document.body.appendChild(input);
+
+  input.addEventListener('input', () => {
+    setFileColor(fileName, input.value);
+    state.cachedRoutes = null;
+    scheduleDraw();
+  });
+  input.addEventListener('change', () => {
+    setFileColor(fileName, input.value);
+    state.cachedRoutes = null;
+    scheduleDraw();
+    input.remove();
+  });
+  input.addEventListener('blur', () => input.remove());
+
+  input.click();
 }

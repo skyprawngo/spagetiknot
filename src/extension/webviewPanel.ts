@@ -46,6 +46,7 @@ function getHtml(
 <body>
 <div id="toolbar">
   <span>SpagetiKnot</span>
+  <button id="btn-back-to-picker" style="display:none">&#8592; Dir</button>
   <input id="search" type="text" placeholder="Search functions..." />
   <button id="btn-dashboard">Dashboard</button>
   <span class="info" id="stats"></span>
@@ -74,16 +75,14 @@ function getHtml(
       <button id="btn-single">Single column</button>
       <button id="btn-horizontal">Horizontal row</button>
       <button id="btn-compact">Compact</button>
-      <button id="btn-stacker">Stacker (2-row offset)</button>
+      <button id="btn-stacker">Stacker 2-row</button>
+      <button id="btn-stacker3">Stacker 3-row</button>
+      <button id="btn-stacker4">Stacker 4-row</button>
       <button id="btn-custom" disabled style="opacity:0.4">Custom (no save yet)</button>
     </div>
     <div class="section">
-      <div class="section-title">Session</div>
-      <div class="save-row">
-        <input id="layout-name-input" type="text" placeholder="Layout name..." />
-        <button id="btn-save-layout">Save</button>
-      </div>
       <div id="dash-saved-layouts"></div>
+      <button id="btn-save-layout">+ Save</button>
     </div>
     <div class="section">
       <div class="section-title">View</div>
@@ -99,6 +98,8 @@ function getHtml(
 </div>
 
 <div id="edge-info"></div>
+
+<!-- Node context popovers are created dynamically by nodeContext.ts -->
 
 <script src="${scriptUri}"></script>
 </body>

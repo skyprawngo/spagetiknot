@@ -1,7 +1,15 @@
 import {
   state, GraphNode, FileGroup,
-  NODE_W, NODE_H, GROUP_PAD, GROUP_HEADER, GROUP_GAP_X, GROUP_GAP_Y, NODE_GAP,
+  NODE_W, NODE_W_MAX, NODE_H, GROUP_PAD, GROUP_HEADER, GROUP_GAP_X, GROUP_GAP_Y, NODE_GAP,
 } from './state';
+
+// bold 13px monospace ≈ 8px per character; 32px horizontal padding
+const CHAR_PX = 8;
+const LABEL_H_PAD = 32;
+
+export function computeNodeWidth(label: string): number {
+  return Math.min(NODE_W_MAX, Math.max(NODE_W, label.length * CHAR_PX + LABEL_H_PAD));
+}
 
 export function getSortedGroupEntries(): [string, GraphNode[]][] {
   const groupMap = new Map<string, GraphNode[]>();
@@ -22,27 +30,41 @@ export function layoutNodesInGroup(g: FileGroup): void {
   const mode = state.groupLayoutModes.get(g.fileName) || 'single';
 
   const cols = mode === 'grid3' ? 3 : mode === 'grid2' ? 2 : 1;
-  const nodeW = cols === 1 ? NODE_W : (NODE_W * 0.9);
-  const innerPad = cols > 1 ? 6 : 0;
 
   // Artwork mode: wider gaps between nodes so traces have room
-  const gap = state.artworkLineMode ? NODE_GAP + 20 : NODE_GAP;
-  const colGap = state.artworkLineMode ? innerPad + 30 : innerPad;
+  const gap    = state.artworkLineMode ? NODE_GAP + 20 : NODE_GAP;
+  const colGap = state.artworkLineMode ? 36 : 6;
 
-  const rows = Math.ceil(gNodes.length / cols);
-  gNodes.forEach((n, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    n.w = nodeW;
+  // Compute per-node widths based on label length
+  gNodes.forEach(n => {
     n.h = NODE_H;
-    n.x = g.x + GROUP_PAD + col * (nodeW + colGap);
-    n.y = g.y + GROUP_HEADER + GROUP_PAD + row * (NODE_H + gap);
+    n.w = computeNodeWidth(n.label);
   });
 
-  const totalW = cols * nodeW + (cols - 1) * colGap + GROUP_PAD * 2;
-  const totalH = GROUP_HEADER + rows * (NODE_H + gap) - gap + GROUP_PAD * 2;
-  g.w = totalW;
-  g.h = totalH;
+  if (cols === 1) {
+    // Single column: each node keeps its own width; group = widest node
+    const groupInnerW = Math.max(...gNodes.map(n => n.w));
+    gNodes.forEach((n, i) => {
+      n.x = g.x + GROUP_PAD;
+      n.y = g.y + GROUP_HEADER + GROUP_PAD + i * (NODE_H + gap);
+    });
+    const rows = gNodes.length;
+    g.w = groupInnerW + GROUP_PAD * 2;
+    g.h = GROUP_HEADER + rows * (NODE_H + gap) - gap + GROUP_PAD * 2;
+  } else {
+    // Grid: uniform width = widest node in the group
+    const uniformW = Math.max(...gNodes.map(n => n.w));
+    gNodes.forEach((n, i) => {
+      n.w = uniformW;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      n.x = g.x + GROUP_PAD + col * (uniformW + colGap);
+      n.y = g.y + GROUP_HEADER + GROUP_PAD + row * (NODE_H + gap);
+    });
+    const rows = Math.ceil(gNodes.length / cols);
+    g.w = cols * uniformW + (cols - 1) * colGap + GROUP_PAD * 2;
+    g.h = GROUP_HEADER + rows * (NODE_H + gap) - gap + GROUP_PAD * 2;
+  }
 }
 
 export function measureGroup(fileName: string): { w: number; h: number } {
@@ -108,39 +130,64 @@ export function applyGlobalLayout(colCount: number): void {
 }
 
 export function applyStackerLayout(): void {
+  applyMultiRowStackerLayout(2);
+}
+
+/**
+ * Multi-row stagger layout.
+ *   numRows  — total number of horizontal bands (2, 3, or 4)
+ *   Odd-numbered rows (1, 3, …) share x = 60 (left-aligned)
+ *   Even-numbered rows (2, 4, …) share x = 60 + staggerOffset
+ */
+export function applyMultiRowStackerLayout(numRows: number): void {
   const entries = getSortedGroupEntries();
-  const sizes = entries.map(([fn]) => measureGroup(fn));
   state.fileGroups = [];
+  if (entries.length === 0) return;
 
-  const row1Entries = entries.filter((_, i) => i % 2 === 0);
-  const row2Entries = entries.filter((_, i) => i % 2 === 1);
-  const row1Sizes = sizes.filter((_, i) => i % 2 === 0);
-
-  const avgRow1W = row1Sizes.length > 0 ? row1Sizes.reduce((s, v) => s + v.w, 0) / row1Sizes.length : NODE_W;
-  const staggerOffset = avgRow1W * 0.4;
-
-  let cx1 = 60;
-  let maxRow1H = 0;
-  for (const [fileName] of row1Entries) {
-    const g: FileGroup = { fileName, x: cx1, y: 60, w: 0, h: 0 };
-    state.fileGroups.push(g);
-    layoutNodesInGroup(g);
-    maxRow1H = Math.max(maxRow1H, g.h);
-    cx1 += g.w + GROUP_GAP_X;
+  // Distribute groups round-robin across rows
+  const rows: [string, any[][]][] = Array.from({ length: numRows }, () => []);
+  // rows[r] = list of [fileName, ...] entries assigned to band r
+  const rowEntries: Array<Array<[string, any[]]>> = Array.from({ length: numRows }, () => []);
+  for (let i = 0; i < entries.length; i++) {
+    rowEntries[i % numRows].push(entries[i]);
   }
 
-  const row2ActualH = row2Entries.map((e) => measureGroup(e[0]).h);
-  const maxRow2H = Math.max(...row2ActualH, 0);
-  const row2Bottom = 60 + maxRow1H + GROUP_GAP_Y * 1.5 + maxRow2H;
+  // Compute stagger offset from average width of row-0 groups
+  const row0Widths = rowEntries[0].map(([fn]) => measureGroup(fn).w);
+  const avgW = row0Widths.length > 0
+    ? row0Widths.reduce((s, v) => s + v, 0) / row0Widths.length
+    : NODE_W;
+  const staggerOffset = avgW * 0.4;
 
-  let cx2 = 60 + staggerOffset;
-  for (let i = 0; i < row2Entries.length; i++) {
-    const [fileName] = row2Entries[i];
-    const h = row2ActualH[i];
-    const g: FileGroup = { fileName, x: cx2, y: row2Bottom - h, w: 0, h: 0 };
-    state.fileGroups.push(g);
-    layoutNodesInGroup(g);
-    cx2 += g.w + GROUP_GAP_X;
+  // x origin per row: odd-index rows (0, 2, …) → 60; even-index rows (1, 3, …) → 60 + offset
+  const rowStartX = (r: number) => r % 2 === 0 ? 60 : 60 + staggerOffset;
+
+  // First pass: measure max height per row and compute cumulative y positions
+  const maxRowH: number[] = rowEntries.map((re) =>
+    re.length > 0 ? Math.max(...re.map(([fn]) => measureGroup(fn).h)) : 0
+  );
+
+  // y for the BOTTOM of each row (groups are bottom-aligned within their band)
+  const rowBottomY: number[] = [];
+  let curY = 60;
+  for (let r = 0; r < numRows; r++) {
+    curY += maxRowH[r];
+    rowBottomY.push(curY);
+    curY += GROUP_GAP_Y * 1.5;
+  }
+
+  // Second pass: place groups
+  for (let r = 0; r < numRows; r++) {
+    let cx = rowStartX(r);
+    const bottomY = rowBottomY[r];
+    for (const [fileName] of rowEntries[r]) {
+      const { h } = measureGroup(fileName);
+      // bottom-align within the row band: set final y before laying out nodes
+      const g: FileGroup = { fileName, x: cx, y: bottomY - h, w: 0, h: 0 };
+      state.fileGroups.push(g);
+      layoutNodesInGroup(g);
+      cx += g.w + GROUP_GAP_X;
+    }
   }
 }
 

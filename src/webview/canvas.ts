@@ -3,7 +3,7 @@ import {
   GROUP_PAD, GROUP_HEADER, GROUP_BTN_SIZE,
 } from './state';
 import { colorForFile } from './colors';
-import { routeAllEdges, routeGroupEdges, computeAllPads, RoutedEdge, Pad } from './routing';
+import { routeAllEdges, computeAllPads, RoutedEdge, Pad } from './routing';
 
 let ctx: CanvasRenderingContext2D;
 let canvasEl: HTMLCanvasElement;
@@ -20,6 +20,39 @@ export function resizeCanvas(): void {
   canvasEl.height = state.height * devicePixelRatio;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 }
+
+// ──────────────────────────────────────────────
+//  RAF-based draw scheduler
+//  Multiple scheduleDraw() calls in the same tick
+//  collapse into a single draw() per animation frame.
+// ──────────────────────────────────────────────
+let rafPending = false;
+
+export function scheduleDraw(): void {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    draw();
+  });
+}
+
+// ──────────────────────────────────────────────
+//  Viewport culling
+//  World-space rect → is any part visible on screen?
+// ──────────────────────────────────────────────
+function inViewport(x: number, y: number, w: number, h: number): boolean {
+  const { offsetX, offsetY, scale, width, height } = state;
+  return (
+    (x + w) * scale + offsetX > 0 &&
+    x * scale + offsetX < width &&
+    (y + h) * scale + offsetY > 0 &&
+    y * scale + offsetY < height
+  );
+}
+
+// Stats DOM — only update when the text actually changes
+let lastStatsText = '';
 
 export function draw(): void {
   const { width, height, nodes, edges, fileGroups, offsetX, offsetY, scale,
@@ -38,6 +71,8 @@ export function draw(): void {
 
   // --- File group boxes ---
   for (const g of fileGroups) {
+    if (!inViewport(g.x, g.y, g.w, g.h)) continue;
+
     const color = colorForFile(g.fileName);
     const isGroupSel = selectedGroupNames.has(g.fileName);
     ctx.fillStyle = isGroupSel ? 'rgba(79,195,247,0.06)' : 'rgba(255,255,255,0.03)';
@@ -55,21 +90,23 @@ export function draw(): void {
     ctx.textBaseline = 'middle';
     ctx.fillText(g.fileName, g.x + 12, g.y + GROUP_HEADER / 2);
 
-    // Route debug button (left of layout button)
+    // Color palette button (left of layout button) — shows current file color as swatch
     const routeBtnX = g.x + g.w - (GROUP_BTN_SIZE + 6) * 2;
     const routeBtnY = g.y + 6;
-    const hasRouteDebug = state.debugRoutedGroups?.has(g.fileName);
-    ctx.fillStyle = hasRouteDebug ? 'rgba(76,175,80,0.2)' : 'rgba(255,255,255,0.08)';
-    ctx.strokeStyle = hasRouteDebug ? '#4caf50' : color;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.strokeStyle = color;
     ctx.lineWidth = 0.8;
     roundRect(routeBtnX, routeBtnY, GROUP_BTN_SIZE, GROUP_BTN_SIZE, 3);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = hasRouteDebug ? '#4caf50' : color;
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('R', routeBtnX + GROUP_BTN_SIZE / 2, routeBtnY + GROUP_BTN_SIZE / 2);
+    // Filled circle swatch in the current group color
+    const swatchR = GROUP_BTN_SIZE / 2 - 3;
+    const swatchCx = routeBtnX + GROUP_BTN_SIZE / 2;
+    const swatchCy = routeBtnY + GROUP_BTN_SIZE / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(swatchCx, swatchCy, swatchR, 0, Math.PI * 2);
+    ctx.fill();
 
     // Layout toggle button
     const btnX = g.x + g.w - GROUP_BTN_SIZE - 6;
@@ -119,15 +156,18 @@ export function draw(): void {
     }
   }
 
-  // --- Prepare artwork routing ---
+  // --- Artwork routing — use cache, only recompute when invalidated ---
   const artMode = state.artworkLineMode;
   let routedEdges: RoutedEdge[] | null = null;
   let allPads: Map<number, { sourcePad: Pad; targetPad: Pad }> | null = null;
 
   if (artMode) {
-    routedEdges = routeAllEdges();
-    state.cachedRoutes = routedEdges;
-    allPads = computeAllPads();
+    if (!state.cachedRoutes) {
+      state.cachedRoutes = routeAllEdges();
+      state.cachedPads = computeAllPads();
+    }
+    routedEdges = state.cachedRoutes as RoutedEdge[];
+    allPads = state.cachedPads as Map<number, { sourcePad: Pad; targetPad: Pad }>;
   }
 
   // --- Render order depends on mode ---
@@ -164,8 +204,13 @@ export function draw(): void {
   }
 
   ctx.restore();
-  const statsEl = document.getElementById('stats')!;
-  statsEl.textContent = nodes.length + ' functions, ' + edges.length + ' connections';
+
+  // Stats — skip DOM write if unchanged
+  const statsText = `${nodes.length} functions, ${edges.length} connections`;
+  if (statsText !== lastStatsText) {
+    (document.getElementById('stats') as HTMLElement).textContent = statsText;
+    lastStatsText = statsText;
+  }
 }
 
 // ============================================================
@@ -319,8 +364,8 @@ function drawMidArrows(path: [number, number][]): void {
 
 // Colors for connection classification
 const COLOR_SELECTED  = '#ffd54f'; // yellow — the clicked node
-const COLOR_CALLEE    = '#ffffff'; // white  — selected node calls these
-const COLOR_CALLER    = '#4fc3f7'; // cyan   — these call the selected node
+const COLOR_CALLEE    = '#81c784'; // green — selected node calls these
+const COLOR_CALLER    = '#4fc3f7'; // cyan  — these call the selected node
 
 function drawNodes(
   nodes: GraphNode[], searchTerm: string,
@@ -328,6 +373,8 @@ function drawNodes(
   calleeIds: Set<string>, callerIds: Set<string>, selectedNodes: Set<string>
 ): void {
   for (const n of nodes) {
+    if (!inViewport(n.x, n.y, n.w, n.h)) continue;
+
     const matched = searchTerm && n.label.toLowerCase().includes(searchTerm);
     const dimmed = searchTerm && !matched;
     const isHovered = hoveredNode === n;
@@ -345,7 +392,8 @@ function drawNodes(
       ctx.globalAlpha = 1;
     }
 
-    // Glow
+    // Glow — only set shadowBlur for highlighted nodes
+    ctx.shadowBlur = 0;
     if (isSelected) { ctx.shadowColor = COLOR_SELECTED; ctx.shadowBlur = 20; }
     else if (isMultiSel) { ctx.shadowColor = '#4fc3f7'; ctx.shadowBlur = 16; }
     else if (isCallee) { ctx.shadowColor = COLOR_CALLEE; ctx.shadowBlur = 14; }
@@ -361,17 +409,11 @@ function drawNodes(
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Label
-    ctx.fillStyle = isSelected ? COLOR_SELECTED : isCallee ? COLOR_CALLEE : isCaller ? COLOR_CALLER : '#fff';
-    ctx.font = 'bold 12px monospace';
-    ctx.textAlign = 'center';
+    // Label — single row, 13px, first capital letter accented with border color
+    const textColor = isSelected ? COLOR_SELECTED : isCallee ? COLOR_CALLEE : isCaller ? COLOR_CALLER : '#fff';
+    ctx.font = 'bold 13px monospace';
     ctx.textBaseline = 'middle';
-    ctx.fillText(truncate(n.label, Math.floor(n.w / 8)), n.x + n.w / 2, n.y + n.h / 2 - 7);
-
-    // File:line
-    ctx.fillStyle = color;
-    ctx.font = '10px monospace';
-    ctx.fillText(truncate(n.fileName + ':' + (n.line + 1), Math.floor(n.w / 7)), n.x + n.w / 2, n.y + n.h / 2 + 10);
+    drawLabelWithAccent(n.label, n.x + n.w / 2, n.y + n.h / 2, textColor, color);
     ctx.globalAlpha = 1;
   }
 }
@@ -401,6 +443,45 @@ function drawPad(pad: Pad): void {
   ctx.globalAlpha = 1;
 }
 
-function truncate(s: string, m: number): string {
-  return s.length > m ? s.slice(0, m - 1) + '\u2026' : s;
+/**
+ * Render a function label centered at (cx, cy).
+ * Every uppercase letter is drawn in accentColor; all other characters in textColor.
+ * Consecutive same-color characters are batched into a single fillText call.
+ */
+function drawLabelWithAccent(
+  label: string,
+  cx: number,
+  cy: number,
+  textColor: string,
+  accentColor: string,
+): void {
+  // font already set by caller
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+
+  const totalW = ctx.measureText(label).width;
+  let x = cx - totalW / 2;
+
+  // Walk through the label, grouping consecutive chars by color
+  let seg = '';
+  let segIsAccent = label.length > 0 && /[A-Z]/.test(label[0]);
+
+  for (const ch of label) {
+    const isAccent = /[A-Z]/.test(ch);
+    if (isAccent !== segIsAccent) {
+      ctx.fillStyle = segIsAccent ? accentColor : textColor;
+      ctx.fillText(seg, x, cy);
+      x += ctx.measureText(seg).width;
+      seg = ch;
+      segIsAccent = isAccent;
+    } else {
+      seg += ch;
+    }
+  }
+  if (seg.length > 0) {
+    ctx.fillStyle = segIsAccent ? accentColor : textColor;
+    ctx.fillText(seg, x, cy);
+  }
+
+  ctx.textAlign = 'center'; // restore default
 }

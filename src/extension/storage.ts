@@ -10,6 +10,7 @@ interface SavedLayout {
   nodes: { id: string; x: number; y: number; w: number; h: number }[];
   groupModes: Record<string, string>;
   view: { offsetX: number; offsetY: number; scale: number };
+  fileColors?: Record<string, string>;
 }
 
 function getSpagetiDir(): string | undefined {
@@ -70,6 +71,34 @@ export function deleteLayout(name: string): void {
   if (!dir) return;
   const filePath = path.join(dir, 'layouts', sanitizeFileName(name) + '.json');
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+}
+
+// ── Last session ──────────────────────────────────────────────────────────────
+
+interface LastSession {
+  targetDir: string;
+  layoutName?: string;
+  savedAt: string;
+}
+
+export function saveLastSession(targetDir: string, layoutName?: string): void {
+  const dir = ensureDirs();
+  if (!dir) return;
+  const data: LastSession = { targetDir, savedAt: new Date().toISOString() };
+  if (layoutName) data.layoutName = layoutName;
+  fs.writeFileSync(path.join(dir, 'last_session.json'), JSON.stringify(data, null, 2), 'utf-8');
+}
+
+export function loadLastSession(): LastSession | undefined {
+  const dir = getSpagetiDir();
+  if (!dir) return undefined;
+  const filePath = path.join(dir, 'last_session.json');
+  if (!fs.existsSync(filePath)) return undefined;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as LastSession;
+  } catch {
+    return undefined;
+  }
 }
 
 function sanitizeFileName(name: string): string {

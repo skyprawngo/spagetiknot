@@ -1,4 +1,5 @@
 import { state } from './state';
+import { getFileColorMap } from './colors';
 
 // @ts-ignore — acquireVsCodeApi is injected by VSCode webview
 const vscode = acquireVsCodeApi();
@@ -16,5 +17,6 @@ export function requestSaveLayout(name: string): void {
     nodes: state.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, w: n.w, h: n.h })),
     groupModes: Object.fromEntries(state.groupLayoutModes),
     view: { offsetX: state.offsetX, offsetY: state.offsetY, scale: state.scale },
+    fileColors: getFileColorMap(),
   });
 }

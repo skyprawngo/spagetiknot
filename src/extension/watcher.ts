@@ -21,7 +21,7 @@ export class FileWatcher {
   start(): void {
     const pattern = new vscode.RelativePattern(
       this.targetDir,
-      '**/*.{ts,tsx,js,jsx,py,go,rs,java,cs,cpp,c,h}'
+      '**/*.{ts,tsx,js,jsx,py,go,rs,java,cs,cpp,c,h,swift}'
     );
 
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
