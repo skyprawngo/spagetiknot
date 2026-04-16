@@ -69,7 +69,26 @@ const PATTERNS_JAVA_CS_CPP: RegExp[] = [
 const PATTERNS_SWIFT: RegExp[] = [
   // func foo(  with optional modifiers — matches only explicit `func` declarations
   /\b(?:(?:mutating|static|class|private|internal|public|open|fileprivate)\s+)*func\s+([a-zA-Z_]\w*)\s*[(<]/g,
+  // init(...) — Swift initializers have no `func` keyword
+  /\b(init)\s*[(<]/g,
+  // var body: — SwiftUI computed body property (View protocol requirement)
+  /\bvar\s+(body)\s*:/g,
 ];
+
+/**
+ * Look upward from `line` for the nearest Swift type declaration.
+ * Returns the type name (e.g. "ViewModel") or null if not found.
+ * Used to qualify 'init' and 'body' with their enclosing type name
+ * so they appear as distinct graph nodes (e.g. "ViewModel.init").
+ */
+function findEnclosingTypeName(doc: vscode.TextDocument, line: number): string | null {
+  const typeRe = /\b(?:class|struct|actor|enum)\s+([A-Z]\w*)/;
+  for (let i = line - 1; i >= Math.max(0, line - 150); i--) {
+    const m = doc.lineAt(i).text.match(typeRe);
+    if (m) return m[1];
+  }
+  return null;
+}
 
 /** Select the right pattern set for a given file path. */
 function patternsForFile(filePath: string): RegExp[] {
@@ -110,18 +129,27 @@ export async function parseFunctions(uri: vscode.Uri): Promise<FunctionInfo[]> {
     const re = new RegExp(pattern.source, pattern.flags);
     let match: RegExpExecArray | null;
     while ((match = re.exec(text)) !== null) {
-      const name = match[1];
+      let name = match[1];
       // Skip single-character names (local helper shortcuts like `d`, `f`, `g`)
       if (name.length < 2) continue;
       // Skip dunder methods (__init__, __str__, __repr__, etc.) — not meaningful call-graph nodes
       if (name.startsWith('__') && name.endsWith('__')) continue;
       const line = doc.positionAt(match.index).line;
+
+      // Swift: qualify 'init' and 'body' with the enclosing type name
+      // so each class/struct gets a distinct node (e.g. "ViewModel.init", "ContentView.body")
+      // instead of dozens of identically-named "init" nodes flooding the graph.
+      if (path.extname(uri.fsPath).toLowerCase() === '.swift' && (name === 'init' || name === 'body')) {
+        const typeName = findEnclosingTypeName(doc, line);
+        if (typeName) name = `${typeName}.${name}`;
+      }
+
       const key = `${name}:${line}`;
       if (!seen.has(key)) {
         seen.add(key);
         const lineText = doc.lineAt(line).text;
         const params = extractParams(lineText);
-        const comment = extractComment(doc, line);
+        const comment = extractComment(doc, line, uri.fsPath);
         results.push({
           name,
           filePath: uri.fsPath,
@@ -184,29 +212,94 @@ function extractParams(lineText: string): string[] {
     .filter((p) => p.length > 0 && !p.startsWith('...'));
 }
 
-/** Extract the first meaningful comment line right after a function declaration. */
-function extractComment(doc: vscode.TextDocument, funcLine: number): string {
-  const maxLook = Math.min(funcLine + 5, doc.lineCount);
+/**
+ * Extract the most relevant comment for a function declaration.
+ *
+ * Direction depends on language convention:
+ *   Swift  — look ABOVE for triple-slash doc comments (placed before the declaration)
+ *   JS/TS  — look ABOVE for JSDoc block comments or // comments; fall back to below
+ *   Python — look BELOW for docstrings (placed inside the function body)
+ *   Others — look below for inline comments
+ */
+function extractComment(doc: vscode.TextDocument, funcLine: number, filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+
+  if (ext === '.swift') {
+    return extractCommentAbove(doc, funcLine);
+  }
+  if (['.ts', '.tsx', '.js', '.jsx'].includes(ext)) {
+    const above = extractCommentAbove(doc, funcLine);
+    if (above) return above;
+  }
+  return extractCommentBelow(doc, funcLine);
+}
+
+/**
+ * Scan upward from `funcLine` for a doc comment.
+ * Skips blank lines and language modifier/annotation lines.
+ */
+function extractCommentAbove(doc: vscode.TextDocument, funcLine: number): string {
+  const MODIFIER_RE = /^(?:@\w|override|final|static|class|open|public|internal|private|fileprivate|mutating|lazy|weak|unowned|async|throws|nonisolated)\b/;
+
+  for (let i = funcLine - 1; i >= Math.max(0, funcLine - 20); i--) {
+    const raw = doc.lineAt(i).text.trim();
+    if (raw === '') continue;
+    if (MODIFIER_RE.test(raw)) continue; // decorator / access modifier — keep looking
+
+    // Swift doc comment ///
+    if (raw.startsWith('///')) return raw.replace(/^\/\/\/\s*/, '').trim();
+
+    // Single-line comment //
+    if (raw.startsWith('//')) return raw.replace(/^\/\/\s*/, '').trim();
+
+    // Inside or end of a /** */ block — find opening line, return first content
+    if (raw === '*/' || raw.endsWith('*/') || (raw.startsWith('*') && !raw.startsWith('*/'))) {
+      for (let j = i; j >= Math.max(0, funcLine - 30); j--) {
+        const cr = doc.lineAt(j).text.trim();
+        if (cr.startsWith('/**') || cr.startsWith('/*')) {
+          // Return the first non-empty content line inside the block
+          for (let k = j + 1; k <= i; k++) {
+            const ct = doc.lineAt(k).text.trim().replace(/^\*\s*/, '');
+            if (ct && ct !== '/') return ct;
+          }
+          return '';
+        }
+      }
+      return '';
+    }
+
+    break; // non-comment, non-modifier → stop
+  }
+  return '';
+}
+
+/**
+ * Scan downward from `funcLine` for a comment or docstring (Python style).
+ */
+function extractCommentBelow(doc: vscode.TextDocument, funcLine: number): string {
+  const maxLook = Math.min(funcLine + 20, doc.lineCount);
   for (let i = funcLine + 1; i < maxLook; i++) {
     const raw = doc.lineAt(i).text.trim();
+
     if (raw === '' || raw === '{' || raw === ':') continue;
-    // Python docstring (single or triple quote)
+
+    // Python triple-quoted docstring
     if (raw.startsWith('"""') || raw.startsWith("'''")) {
-      return raw.replace(/^['"]{3}/, '').replace(/['"]{3}.*$/, '').trim();
+      const inner = raw.replace(/^['"]{3}/, '').replace(/['"]{3}.*$/, '').trim();
+      if (inner.length > 0) return inner;
+      for (let j = i + 1; j < maxLook; j++) {
+        const next = doc.lineAt(j).text.trim();
+        if (next === '' || next.startsWith('"""') || next.startsWith("'''")) continue;
+        return next.replace(/['"]{3}.*$/, '').trim();
+      }
+      return '';
     }
-    // JS/TS/Go/Rust single-line comment
-    if (raw.startsWith('//')) {
-      return raw.replace(/^\/\/\s*/, '').trim();
-    }
-    // Block comment continuation
-    if (raw.startsWith('*') && !raw.startsWith('*/')) {
-      return raw.replace(/^\*\s*/, '').trim();
-    }
-    // Python/shell hash comment
-    if (raw.startsWith('#')) {
-      return raw.replace(/^#\s*/, '').trim();
-    }
-    break; // non-comment code line — stop looking
+
+    if (raw.startsWith('//')) return raw.replace(/^\/\/\s*/, '').trim();
+    if (raw.startsWith('*') && !raw.startsWith('*/')) return raw.replace(/^\*\s*/, '').trim();
+    if (raw.startsWith('#')) return raw.replace(/^#\s*/, '').trim();
+
+    break;
   }
   return '';
 }

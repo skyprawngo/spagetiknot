@@ -1,8 +1,8 @@
 import { state, NODE_W, NODE_H, GROUP_PAD, GROUP_HEADER, NODE_GAP } from './state';
 import { draw, scheduleDraw, resizeCanvas } from './canvas';
 import {
-  layoutNodesInGroup, resolveGroupOverlaps, expandGroupToFitNode,
-  saveCustomSnapshot,
+  layoutNodesInGroup, expandGroupToFitNode,
+  saveCustomSnapshot, resolveAllOverlaps,
 } from './layout';
 import {
   hitTestNode, hitTestGroupHeader, hitTestGroupBtn, hitTestGroupRouteBtn,
@@ -10,7 +10,7 @@ import {
 } from './hitTest';
 import { showEdgeInfo, hideEdgeInfo } from './dashboard';
 import { postMessage } from './messaging';
-import { show as showNodeContext, hide as hideNodeContext } from './nodeContext';
+import { show as showNodeContext, hide as hideNodeContext, hasPopovers } from './nodeContext';
 import { colorForFile, setFileColor } from './colors';
 
 /** Invalidate artwork routing cache — call whenever node/group positions change */
@@ -71,19 +71,17 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
   canvas.addEventListener('mousedown', (e) => {
     const w = screenToWorld(e.offsetX, e.offsetY);
 
-    // Cmd+클릭: 경로 복사
+    // Cmd+클릭: go to definition
     if (e.metaKey && e.button === 0) {
       const hit = hitTestNode(w.x, w.y);
       if (hit) {
-        // 함수 노드: 파일 경로 + 함수명 복사
-        postMessage({ command: 'copyToClipboard', text: `${hit.file}:${hit.label}` });
+        postMessage({ command: 'openFile', filePath: hit.file, line: hit.line });
         return;
       }
       const gh = hitTestGroupHeader(w.x, w.y);
       if (gh) {
-        // 파일 그룹 헤더: 파일 경로만 복사
         const node = state.nodes.find(n => n.fileName === gh.fileName);
-        if (node) postMessage({ command: 'copyToClipboard', text: node.file });
+        if (node) postMessage({ command: 'openFile', filePath: node.file, line: 0 });
         return;
       }
     }
@@ -100,10 +98,16 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
 
     if (e.button !== 0) return;
 
+    // While any popover is open, all left-clicks on the canvas are absorbed by the
+    // document-level "outside click" listener in nodeContext (which pops the top
+    // popover).  Skip canvas-level selection / drag so the node highlight is
+    // preserved until the last popover is dismissed.
+    if (hasPopovers()) return;
+
     // Color palette button
     const routeBtnG = hitTestGroupRouteBtn(w.x, w.y);
     if (routeBtnG) {
-      openColorPicker(routeBtnG.fileName);
+      openColorPicker(routeBtnG.fileName, e.clientX, e.clientY);
       return;
     }
 
@@ -114,7 +118,7 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       const next = cur === 'single' ? 'grid2' : cur === 'grid2' ? 'grid3' : 'single';
       state.groupLayoutModes.set(btnG.fileName, next);
       layoutNodesInGroup(btnG);
-      resolveGroupOverlaps(btnG);
+      resolveAllOverlaps();
       invalidateRouteCache();
       scheduleDraw();
       return;
@@ -158,8 +162,6 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       state.selectedEdgeIdx = -1;
       if (state.selectedNode === hit) {
         // Already selected — show popover, keep selected, no drag
-        // stopPropagation prevents the document-level "outside click" listener
-        // in nodeContext from immediately closing the popover we just opened.
         e.stopPropagation();
         showNodeContext(hit, e.clientX, e.clientY);
         scheduleDraw();
@@ -185,7 +187,7 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
       return;
     }
 
-    // Empty space → rectangle selection
+    // Empty space → rectangle selection (clears selection)
     state.selectedNode = null;
     state.selectedEdgeIdx = -1;
     hideEdgeInfo();
@@ -408,16 +410,29 @@ export function setupCanvasEvents(canvas: HTMLCanvasElement): void {
   });
 
   window.addEventListener('resize', () => { resizeCanvas(); scheduleDraw(); });
+
+  // Cmd+C: 선택된 함수의 파일 경로 + 함수명 복사
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'c' && e.metaKey && !e.shiftKey && !e.altKey) {
+      if (state.selectedNode) {
+        e.preventDefault();
+        postMessage({
+          command: 'copyToClipboard',
+          text: `${state.selectedNode.file}:${state.selectedNode.label}`,
+        });
+      }
+    }
+  });
 }
 
 /** Open the OS/browser native color picker for a file group. */
-function openColorPicker(fileName: string): void {
+function openColorPicker(fileName: string, clientX: number, clientY: number): void {
   const current = colorForFile(fileName);
   const input = document.createElement('input');
   input.type = 'color';
   input.value = current;
-  // Keep it invisible but in the DOM so the browser can open its native picker
-  input.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:0;height:0;';
+  // Position the invisible input at the mouse location so the OS picker opens nearby
+  input.style.cssText = `position:fixed;opacity:0;pointer-events:none;width:0;height:0;left:${clientX}px;top:${clientY}px;`;
   document.body.appendChild(input);
 
   input.addEventListener('input', () => {

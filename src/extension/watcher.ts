@@ -1,8 +1,13 @@
 import * as vscode from 'vscode';
 import { parseFunctions, FunctionInfo } from './parser';
-import { findReferences, FlowEdge } from './references';
+import { findReferences, FlowEdge, ExternalCall } from './references';
 
-type OnUpdateCallback = (functions: FunctionInfo[], edges: FlowEdge[], changedFiles: string[]) => void;
+type OnUpdateCallback = (
+  functions: FunctionInfo[],
+  edges: FlowEdge[],
+  externalCalls: ExternalCall[],
+  changedFiles: string[],
+) => void;
 
 export class FileWatcher {
   private watcher: vscode.FileSystemWatcher | undefined;
@@ -80,7 +85,7 @@ export class FileWatcher {
     }
 
     // Rebuild all edges (edges depend on the full function set)
-    const edges = await findReferences(this.functions);
-    this.onUpdate(this.functions, edges, changedFiles);
+    const { edges, externalCalls } = await findReferences(this.functions);
+    this.onUpdate(this.functions, edges, externalCalls, changedFiles);
   }
 }

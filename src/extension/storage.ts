@@ -73,19 +73,17 @@ export function deleteLayout(name: string): void {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }
 
-// ── Last session ──────────────────────────────────────────────────────────────
+// ── Last session (last used targetDir) ───────────────────────────────────────
 
 interface LastSession {
   targetDir: string;
-  layoutName?: string;
   savedAt: string;
 }
 
-export function saveLastSession(targetDir: string, layoutName?: string): void {
+export function saveLastSession(targetDir: string): void {
   const dir = ensureDirs();
   if (!dir) return;
   const data: LastSession = { targetDir, savedAt: new Date().toISOString() };
-  if (layoutName) data.layoutName = layoutName;
   fs.writeFileSync(path.join(dir, 'last_session.json'), JSON.stringify(data, null, 2), 'utf-8');
 }
 
@@ -96,6 +94,40 @@ export function loadLastSession(): LastSession | undefined {
   if (!fs.existsSync(filePath)) return undefined;
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as LastSession;
+  } catch {
+    return undefined;
+  }
+}
+
+// ── Per-directory layout memory (sessions.json) ───────────────────────────────
+
+export interface DirLayoutEntry {
+  layoutType?: string;   // built-in: 'stacker2' | 'stacker3' | 'stacker4' | '1col' | 'horizontal' | 'compact'
+  layoutName?: string;   // saved named layout
+}
+
+export function saveLastDirLayout(targetDir: string, entry: DirLayoutEntry): void {
+  const dir = ensureDirs();
+  if (!dir) return;
+  const filePath = path.join(dir, 'sessions.json');
+  let sessions: Record<string, DirLayoutEntry> = {};
+  try {
+    if (fs.existsSync(filePath)) {
+      sessions = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    }
+  } catch { /* start fresh */ }
+  sessions[targetDir] = entry;
+  fs.writeFileSync(filePath, JSON.stringify(sessions, null, 2), 'utf-8');
+}
+
+export function loadLastDirLayout(targetDir: string): DirLayoutEntry | undefined {
+  const dir = getSpagetiDir();
+  if (!dir) return undefined;
+  const filePath = path.join(dir, 'sessions.json');
+  if (!fs.existsSync(filePath)) return undefined;
+  try {
+    const sessions: Record<string, DirLayoutEntry> = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return sessions[targetDir];
   } catch {
     return undefined;
   }

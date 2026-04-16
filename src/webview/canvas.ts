@@ -4,6 +4,8 @@ import {
 } from './state';
 import { colorForFile } from './colors';
 import { routeAllEdges, computeAllPads, RoutedEdge, Pad } from './routing';
+import { getTheme, withAlpha, Theme } from './theme';
+import { DEFAULT_FONT } from './selectionScale';
 
 let ctx: CanvasRenderingContext2D;
 let canvasEl: HTMLCanvasElement;
@@ -55,6 +57,8 @@ function inViewport(x: number, y: number, w: number, h: number): boolean {
 let lastStatsText = '';
 
 export function draw(): void {
+  const theme = getTheme();
+
   const { width, height, nodes, edges, fileGroups, offsetX, offsetY, scale,
     selectedNode, selectedEdgeIdx, searchTerm, hoveredNode,
     selectedNodes, selectedGroupNames, rectSelecting,
@@ -75,8 +79,8 @@ export function draw(): void {
 
     const color = colorForFile(g.fileName);
     const isGroupSel = selectedGroupNames.has(g.fileName);
-    ctx.fillStyle = isGroupSel ? 'rgba(79,195,247,0.06)' : 'rgba(255,255,255,0.03)';
-    ctx.strokeStyle = isGroupSel ? '#4fc3f7' : color;
+    ctx.fillStyle = isGroupSel ? withAlpha(theme.caller, 0.06) : withAlpha(theme.foreground, 0.03);
+    ctx.strokeStyle = isGroupSel ? theme.caller : color;
     ctx.lineWidth = isGroupSel ? 2 : 1;
     ctx.globalAlpha = isGroupSel ? 0.9 : 0.6;
     roundRect(g.x, g.y, g.w, g.h, 8);
@@ -93,7 +97,7 @@ export function draw(): void {
     // Color palette button (left of layout button) — shows current file color as swatch
     const routeBtnX = g.x + g.w - (GROUP_BTN_SIZE + 6) * 2;
     const routeBtnY = g.y + 6;
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillStyle = withAlpha(theme.foreground, 0.06);
     ctx.strokeStyle = color;
     ctx.lineWidth = 0.8;
     roundRect(routeBtnX, routeBtnY, GROUP_BTN_SIZE, GROUP_BTN_SIZE, 3);
@@ -111,7 +115,7 @@ export function draw(): void {
     // Layout toggle button
     const btnX = g.x + g.w - GROUP_BTN_SIZE - 6;
     const btnY = g.y + 6;
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillStyle = withAlpha(theme.foreground, 0.08);
     ctx.strokeStyle = color;
     ctx.lineWidth = 0.8;
     roundRect(btnX, btnY, GROUP_BTN_SIZE, GROUP_BTN_SIZE, 3);
@@ -174,17 +178,17 @@ export function draw(): void {
   // Normal: Edges → Nodes (edges behind)
   // Artwork: Nodes → Edges → Pads (traces visible on top)
   if (artMode) {
-    drawNodes(nodes, searchTerm, selectedNode, hoveredNode, calleeIds, callerIds, selectedNodes);
-    drawEdges(edges, nodes, nodeMap, searchTerm, selectedNode, selectedEdges, selectedEdgeIdx, artMode, routedEdges);
+    drawNodes(nodes, searchTerm, selectedNode, hoveredNode, calleeIds, callerIds, selectedNodes, theme);
+    drawEdges(edges, nodes, nodeMap, searchTerm, selectedNode, selectedEdges, selectedEdgeIdx, artMode, routedEdges, theme);
     if (allPads) {
       for (const [, { sourcePad, targetPad }] of allPads) {
-        drawPad(sourcePad);
-        drawPad(targetPad);
+        drawPad(sourcePad, theme);
+        drawPad(targetPad, theme);
       }
     }
   } else {
-    drawEdges(edges, nodes, nodeMap, searchTerm, selectedNode, selectedEdges, selectedEdgeIdx, artMode, null);
-    drawNodes(nodes, searchTerm, selectedNode, hoveredNode, calleeIds, callerIds, selectedNodes);
+    drawEdges(edges, nodes, nodeMap, searchTerm, selectedNode, selectedEdges, selectedEdgeIdx, artMode, null, theme);
+    drawNodes(nodes, searchTerm, selectedNode, hoveredNode, calleeIds, callerIds, selectedNodes, theme);
   }
 
   // --- Selection rectangle (AutoCAD style) ---
@@ -195,10 +199,10 @@ export function draw(): void {
     const rh = Math.abs(rectCurWy - rectStartWy);
     const isWindowMode = rectCurWx < rectStartWx;
     // Crossing (L→R): green solid, Window (R→L): blue dashed
-    ctx.strokeStyle = isWindowMode ? '#4fc3f7' : '#81c784';
+    ctx.strokeStyle = isWindowMode ? theme.caller : theme.callee;
     ctx.lineWidth = 1 / scale;
     ctx.setLineDash(isWindowMode ? [4 / scale, 4 / scale] : []);
-    ctx.fillStyle = isWindowMode ? 'rgba(79,195,247,0.08)' : 'rgba(129,199,132,0.08)';
+    ctx.fillStyle = isWindowMode ? withAlpha(theme.caller, 0.08) : withAlpha(theme.callee, 0.08);
     ctx.beginPath(); ctx.rect(rx, ry, rw, rh); ctx.fill(); ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -217,27 +221,14 @@ export function draw(): void {
 //  SUB-RENDERERS
 // ============================================================
 
-// Trace color palette — traces colored by source file
-const traceColors = [
-  '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
-  '#ba68c8', '#4dd0e1', '#aed581', '#ff8a65',
-  '#f06292', '#7986cb', '#a1887f', '#90a4ae',
-];
-const traceColorMap = new Map<string, string>();
-function traceColorForFile(fileName: string): string {
-  if (!traceColorMap.has(fileName)) {
-    traceColorMap.set(fileName, traceColors[traceColorMap.size % traceColors.length]);
-  }
-  return traceColorMap.get(fileName)!;
-}
-
 const MID_ARROW_INTERVAL = 80; // px between mid-path arrows
 
 function drawEdges(
   edges: any[], nodes: GraphNode[], nodeMap: Map<string, GraphNode>,
   searchTerm: string, selectedNode: GraphNode | null,
   selectedEdges: Set<number>, selectedEdgeIdx: number,
-  artMode: boolean, routedEdges: RoutedEdge[] | null
+  artMode: boolean, routedEdges: RoutedEdge[] | null,
+  theme: Theme
 ): void {
   const routedMap = new Map<number, RoutedEdge>();
   if (routedEdges) routedEdges.forEach(r => routedMap.set(r.edgeIdx, r));
@@ -257,24 +248,24 @@ function drawEdges(
 
     // --- Determine stroke style ---
     if (isClickedEdge) {
-      ctx.strokeStyle = '#fff';
+      ctx.strokeStyle = theme.foreground;
       ctx.lineWidth = artMode ? 4 : 3;
       ctx.globalAlpha = 1;
     } else if (isSelEdge) {
-      ctx.strokeStyle = '#ffd54f';
+      ctx.strokeStyle = theme.selected;
       ctx.lineWidth = artMode ? 3.5 : 2.5;
       ctx.globalAlpha = 1;
     } else if (isSearchHit) {
-      ctx.strokeStyle = '#ffeb3b';
+      ctx.strokeStyle = theme.search;
       ctx.lineWidth = artMode ? 3 : 2;
       ctx.globalAlpha = 1;
     } else if (artMode) {
       // Color by source file
-      ctx.strokeStyle = traceColorForFile(a.fileName);
+      ctx.strokeStyle = colorForFile(a.fileName);
       ctx.lineWidth = 2.5;
       ctx.globalAlpha = selectedNode ? 0.15 : 0.75;
     } else {
-      ctx.strokeStyle = 'rgba(150,150,150,0.4)';
+      ctx.strokeStyle = theme.edgeDefault;
       ctx.lineWidth = 1;
       ctx.globalAlpha = selectedNode ? 0.15 : 1;
     }
@@ -362,15 +353,11 @@ function drawMidArrows(path: [number, number][]): void {
   }
 }
 
-// Colors for connection classification
-const COLOR_SELECTED  = '#ffd54f'; // yellow — the clicked node
-const COLOR_CALLEE    = '#81c784'; // green — selected node calls these
-const COLOR_CALLER    = '#4fc3f7'; // cyan  — these call the selected node
-
 function drawNodes(
   nodes: GraphNode[], searchTerm: string,
   selectedNode: GraphNode | null, hoveredNode: GraphNode | null,
-  calleeIds: Set<string>, callerIds: Set<string>, selectedNodes: Set<string>
+  calleeIds: Set<string>, callerIds: Set<string>, selectedNodes: Set<string>,
+  theme: Theme
 ): void {
   for (const n of nodes) {
     if (!inViewport(n.x, n.y, n.w, n.h)) continue;
@@ -394,24 +381,32 @@ function drawNodes(
 
     // Glow — only set shadowBlur for highlighted nodes
     ctx.shadowBlur = 0;
-    if (isSelected) { ctx.shadowColor = COLOR_SELECTED; ctx.shadowBlur = 20; }
-    else if (isMultiSel) { ctx.shadowColor = '#4fc3f7'; ctx.shadowBlur = 16; }
-    else if (isCallee) { ctx.shadowColor = COLOR_CALLEE; ctx.shadowBlur = 14; }
-    else if (isCaller) { ctx.shadowColor = COLOR_CALLER; ctx.shadowBlur = 14; }
-    else if (isHovered) { ctx.shadowColor = color; ctx.shadowBlur = 12; }
+    if (isSelected)       { ctx.shadowColor = theme.selected; ctx.shadowBlur = 20; }
+    else if (isMultiSel)  { ctx.shadowColor = theme.caller;   ctx.shadowBlur = 16; }
+    else if (isCallee)    { ctx.shadowColor = theme.callee;   ctx.shadowBlur = 14; }
+    else if (isCaller)    { ctx.shadowColor = theme.caller;   ctx.shadowBlur = 14; }
+    else if (isHovered)   { ctx.shadowColor = color;          ctx.shadowBlur = 12; }
 
-    // Box
-    const connColor = isCallee ? COLOR_CALLEE : isCaller ? COLOR_CALLER : color;
-    ctx.fillStyle = isSelected ? '#2d2d1e' : isMultiSel ? '#1e2a3a' : isConnected ? '#1e2228' : isHovered ? '#2a2a2a' : '#1e1e1e';
-    ctx.strokeStyle = isSelected ? COLOR_SELECTED : isMultiSel ? '#4fc3f7' : isConnected ? connColor : color;
+    const connColor = isCallee ? theme.callee : isCaller ? theme.caller : color;
+    ctx.fillStyle = isSelected  ? theme.fillSelected
+                  : isMultiSel  ? theme.fillMultiSel
+                  : isConnected ? theme.fillConnected
+                  : isHovered   ? theme.fillHover
+                  :               theme.fillDefault;
+    ctx.strokeStyle = isSelected  ? theme.selected
+                    : isMultiSel  ? theme.caller
+                    : isConnected ? connColor
+                    :               color;
     ctx.lineWidth = isSelected ? 3 : isMultiSel ? 2.5 : isConnected ? 2.5 : isHovered ? 2.5 : 1.5;
     roundRect(n.x, n.y, n.w, n.h, 6);
     ctx.fill(); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Label — single row, 13px, first capital letter accented with border color
-    const textColor = isSelected ? COLOR_SELECTED : isCallee ? COLOR_CALLEE : isCaller ? COLOR_CALLER : '#fff';
-    ctx.font = 'bold 13px monospace';
+    const textColor = isSelected ? theme.selected
+                    : isCallee   ? theme.callee
+                    : isCaller   ? theme.caller
+                    :              theme.foreground;
+    ctx.font = `bold ${DEFAULT_FONT}px monospace`;
     ctx.textBaseline = 'middle';
     drawLabelWithAccent(n.label, n.x + n.w / 2, n.y + n.h / 2, textColor, color);
     ctx.globalAlpha = 1;
@@ -433,9 +428,9 @@ function roundRect(x: number, y: number, w: number, h: number, r: number): void 
 }
 
 /** Draw a small circular pad on the node edge */
-function drawPad(pad: Pad): void {
+function drawPad(pad: Pad, theme: Theme): void {
   const r = 3;
-  ctx.fillStyle = '#aaa';
+  ctx.fillStyle = theme.padFill;
   ctx.globalAlpha = 0.7;
   ctx.beginPath();
   ctx.arc(pad.x, pad.y, r, 0, Math.PI * 2);

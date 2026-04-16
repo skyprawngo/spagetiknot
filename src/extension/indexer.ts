@@ -18,7 +18,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { parseWorkspaceFunctions, FunctionInfo } from './parser';
-import { findReferences, FlowEdge } from './references';
+import { findReferences, FlowEdge, ExternalCall } from './references';
 import { FileWatcher } from './watcher';
 import { log } from './logger';
 
@@ -39,6 +39,13 @@ export interface SerializedEdge {
   params: string[];
 }
 
+export interface SerializedExternalCall {
+  callerNodeId: string;
+  name: string;
+  realName: string;
+  module: string;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -55,6 +62,7 @@ export async function runIndexing(
   targetDir: string,
   currentWatcher: FileWatcher | undefined,
   savedLayout?: any,
+  autoLayoutType?: string,
 ): Promise<FileWatcher | undefined> {
   currentWatcher?.stop();
   log('runIndexing start:', targetDir);
@@ -70,14 +78,15 @@ export async function runIndexing(
     return undefined;
   }
 
-  const edges = await findReferences(functions);
-  log('Edges found:', edges.length);
+  const { edges, externalCalls } = await findReferences(functions);
+  log('Edges found:', edges.length, '| External calls:', externalCalls.length);
 
   panel.webview.postMessage({
     command: 'loadData',
     targetDir,
     functions: serializeFunctions(functions),
     edges: serializeEdges(edges),
+    externalCalls: serializeExternalCalls(externalCalls),
     savedLayout: savedLayout ? {
       groups: savedLayout.groups,
       nodes: savedLayout.nodes,
@@ -85,14 +94,16 @@ export async function runIndexing(
       view: savedLayout.view,
       fileColors: savedLayout.fileColors,
     } : undefined,
+    autoLayoutType: autoLayoutType || undefined,
   });
 
-  const watcher = new FileWatcher(targetDir, functions, (updatedFns, updatedEdges, changedFiles) => {
+  const watcher = new FileWatcher(targetDir, functions, (updatedFns, updatedEdges, updatedExternal, changedFiles) => {
     panel.webview.postMessage({
       command: 'incrementalUpdate',
       targetDir,
       functions: serializeFunctions(updatedFns),
       edges: serializeEdges(updatedEdges),
+      externalCalls: serializeExternalCalls(updatedExternal),
       changedFiles,
     });
   });
@@ -129,6 +140,15 @@ function serializeEdges(edges: FlowEdge[]): SerializedEdge[] {
     target: e.target,
     args: e.args,
     params: e.params,
+  }));
+}
+
+function serializeExternalCalls(calls: ExternalCall[]): SerializedExternalCall[] {
+  return calls.map(c => ({
+    callerNodeId: c.callerNodeId,
+    name:         c.name,
+    realName:     c.realName,
+    module:       c.module,
   }));
 }
 

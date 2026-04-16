@@ -80,13 +80,25 @@ export function setupDashboard(): void {
     if (dragging) { dragging = false; dashHeader.style.cursor = 'grab'; }
   });
 
-  // Layout buttons
-  document.getElementById('btn-single')!.addEventListener('click', () => { applyGlobalLayout(1); draw(); });
-  document.getElementById('btn-horizontal')!.addEventListener('click', () => { applyGlobalLayout(0); draw(); });
-  document.getElementById('btn-compact')!.addEventListener('click', () => { applyGlobalLayout(-1); draw(); });
-  document.getElementById('btn-stacker')!.addEventListener('click',   () => { applyStackerLayout(); draw(); });
-  document.getElementById('btn-stacker3')!.addEventListener('click', () => { applyMultiRowStackerLayout(3); draw(); });
-  document.getElementById('btn-stacker4')!.addEventListener('click', () => { applyMultiRowStackerLayout(4); draw(); });
+  // Layout buttons — also record the layout type for auto-restore on next open
+  document.getElementById('btn-single')!.addEventListener('click', () => {
+    applyGlobalLayout(1); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: '1col' }); draw();
+  });
+  document.getElementById('btn-horizontal')!.addEventListener('click', () => {
+    applyGlobalLayout(0); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: 'horizontal' }); draw();
+  });
+  document.getElementById('btn-compact')!.addEventListener('click', () => {
+    applyGlobalLayout(-1); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: 'compact' }); draw();
+  });
+  document.getElementById('btn-stacker')!.addEventListener('click', () => {
+    applyStackerLayout(); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: 'stacker2' }); draw();
+  });
+  document.getElementById('btn-stacker3')!.addEventListener('click', () => {
+    applyMultiRowStackerLayout(3); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: 'stacker3' }); draw();
+  });
+  document.getElementById('btn-stacker4')!.addEventListener('click', () => {
+    applyMultiRowStackerLayout(4); postMessage({ command: 'setLastLayout', targetDir: state.targetDir, layoutType: 'stacker4' }); draw();
+  });
   document.getElementById('btn-custom')!.addEventListener('click', () => { restoreCustomSnapshot(); draw(); });
   document.getElementById('btn-fit')!.addEventListener('click', () => { fitToScreen(); draw(); });
   document.getElementById('btn-reset')!.addEventListener('click', () => {

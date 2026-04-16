@@ -15,7 +15,8 @@ import * as vscode from 'vscode';
 import { runIndexing, buildDirItems } from './indexer';
 import { FileWatcher } from './watcher';
 import {
-  saveLayout, loadLayout, listSavedLayouts, deleteLayout, saveLastSession,
+  saveLayout, loadLayout, listSavedLayouts, deleteLayout,
+  saveLastSession, saveLastDirLayout, loadLastDirLayout,
 } from './storage';
 import { log, logError } from './logger';
 
@@ -73,9 +74,25 @@ async function dispatch(
 
     case 'selectDir': {
       log('Indexing directory:', msg.dir);
-      const w = await runIndexing(panel, msg.dir, getWatcher());
+      const dirEntry = loadLastDirLayout(msg.dir);
+      let savedLayout: any = undefined;
+      let autoLayoutType: string | undefined = undefined;
+      if (dirEntry?.layoutName) {
+        savedLayout = loadLayout(dirEntry.layoutName);
+      } else if (dirEntry?.layoutType) {
+        autoLayoutType = dirEntry.layoutType;
+      }
+      const w = await runIndexing(panel, msg.dir, getWatcher(), savedLayout, autoLayoutType);
       setWatcher(w);
       saveLastSession(msg.dir);
+      break;
+    }
+
+    case 'setLastLayout': {
+      const { layoutType, layoutName } = msg;
+      if (msg.targetDir) {
+        saveLastDirLayout(msg.targetDir, layoutName ? { layoutName } : { layoutType });
+      }
       break;
     }
 
@@ -99,7 +116,8 @@ async function dispatch(
         log('Loading layout:', msg.name, 'targetDir:', layout.targetDir);
         const w = await runIndexing(panel, layout.targetDir, getWatcher(), layout);
         setWatcher(w);
-        saveLastSession(layout.targetDir, msg.name);
+        saveLastSession(layout.targetDir);
+        saveLastDirLayout(layout.targetDir, { layoutName: msg.name });
       } else {
         log('Layout not found or corrupted:', msg.name);
         vscode.window.showErrorMessage(
@@ -122,6 +140,60 @@ async function dispatch(
         saveLayout(layout);
         deleteLayout(msg.oldName);
         panel.webview.postMessage({ command: 'savedLayouts', layouts: listSavedLayouts() });
+      }
+      break;
+    }
+
+    case 'getHoverInfo': {
+      const { requestId, callerNodeId, name, realName } = msg;
+      // callerNodeId format: "filePath:line:functionName"
+      // Split from the right to handle Windows paths with drive letters
+      const lastColon2 = callerNodeId.lastIndexOf(':');
+      const lastColon1 = callerNodeId.lastIndexOf(':', lastColon2 - 1);
+      const filePath = callerNodeId.slice(0, lastColon1);
+      const startLine = parseInt(callerNodeId.slice(lastColon1 + 1, lastColon2), 10);
+
+      try {
+        const uri = vscode.Uri.file(filePath);
+        const doc = await vscode.workspace.openTextDocument(uri);
+        const searchName = (realName || name) + '(';
+
+        let foundLine = -1;
+        let foundChar = -1;
+        const limit = Math.min(startLine + 300, doc.lineCount);
+        for (let i = startLine; i < limit; i++) {
+          const lineText = doc.lineAt(i).text;
+          const idx = lineText.indexOf(searchName);
+          if (idx !== -1) {
+            foundLine = i;
+            foundChar = idx + Math.floor(searchName.length / 2);
+            break;
+          }
+        }
+
+        if (foundLine === -1) {
+          panel.webview.postMessage({ command: 'hoverResult', requestId, content: '' });
+          break;
+        }
+
+        const position = new vscode.Position(foundLine, foundChar);
+        const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
+          'vscode.executeHoverProvider', uri, position,
+        );
+
+        const content = (hovers || [])
+          .flatMap(h => h.contents)
+          .map(c => {
+            if (typeof c === 'string') return c;
+            return (c as vscode.MarkdownString).value || '';
+          })
+          .filter(Boolean)
+          .join('\n\n');
+
+        panel.webview.postMessage({ command: 'hoverResult', requestId, content });
+      } catch (err) {
+        logError('getHoverInfo', err);
+        panel.webview.postMessage({ command: 'hoverResult', requestId, content: '' });
       }
       break;
     }

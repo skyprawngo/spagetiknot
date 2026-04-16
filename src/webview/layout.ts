@@ -206,37 +206,52 @@ export function fitToScreen(): void {
   state.offsetY = pad - minY * state.scale + (state.height - pad * 2 - ch * state.scale) / 2;
 }
 
-export function resolveGroupOverlaps(changed: FileGroup): void {
+export function resolveGroupOverlaps(_changed?: FileGroup): void {
+  resolveAllOverlaps();
+}
+
+/**
+ * Full all-pairs overlap resolution.
+ * Iterates until no two groups overlap (or max iterations exceeded).
+ * Handles cascade: A pushes B, B pushes C, etc.
+ */
+export function resolveAllOverlaps(): void {
   const margin = 12;
-  let maxIter = state.fileGroups.length * 4;
+  const gs = state.fileGroups;
+  const maxIter = gs.length * gs.length * 4 + 8;
   let didMove = true;
-  while (didMove && maxIter-- > 0) {
+  let iter = 0;
+  while (didMove && iter++ < maxIter) {
     didMove = false;
-    for (const other of state.fileGroups) {
-      if (other === changed) continue;
-      const ox = changed.x - margin, oy = changed.y - margin;
-      const ow = changed.w + margin * 2, oh = changed.h + margin * 2;
-      if (other.x + other.w <= ox || other.x >= ox + ow ||
-          other.y + other.h <= oy || other.y >= oy + oh) continue;
+    for (let i = 0; i < gs.length; i++) {
+      for (let j = i + 1; j < gs.length; j++) {
+        const a = gs[i];
+        const b = gs[j];
+        const ax = a.x - margin, ay = a.y - margin;
+        const aw = a.w + margin * 2, ah = a.h + margin * 2;
+        // No overlap?
+        if (b.x + b.w <= ax || b.x >= ax + aw ||
+            b.y + b.h <= ay || b.y >= ay + ah) continue;
 
-      const pushR = (ox + ow) - other.x;
-      const pushL = (other.x + other.w) - ox;
-      const pushD = (oy + oh) - other.y;
-      const pushU = (other.y + other.h) - oy;
-      const minPush = Math.min(pushR, pushL, pushD, pushU);
+        // Compute minimum-distance push direction (push b away from a)
+        const pushR = (ax + aw) - b.x;
+        const pushL = (b.x + b.w) - ax;
+        const pushD = (ay + ah) - b.y;
+        const pushU = (b.y + b.h) - ay;
+        const minPush = Math.min(pushR, pushL, pushD, pushU);
 
-      let dx = 0, dy = 0;
-      if (minPush === pushR) dx = pushR;
-      else if (minPush === pushL) dx = -pushL;
-      else if (minPush === pushD) dy = pushD;
-      else dy = -pushU;
+        let dx = 0, dy = 0;
+        if (minPush === pushR)      dx =  pushR;
+        else if (minPush === pushL) dx = -pushL;
+        else if (minPush === pushD) dy =  pushD;
+        else                        dy = -pushU;
 
-      other.x += dx;
-      other.y += dy;
-      for (const n of state.nodes) {
-        if (n.fileName === other.fileName) { n.x += dx; n.y += dy; }
+        b.x += dx; b.y += dy;
+        for (const n of state.nodes) {
+          if (n.fileName === b.fileName) { n.x += dx; n.y += dy; }
+        }
+        didMove = true;
       }
-      didMove = true;
     }
   }
 }

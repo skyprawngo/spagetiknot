@@ -24,6 +24,13 @@ export interface GraphEdge {
   params: string[];
 }
 
+/** A call from a project function to an external library function (popover-only). */
+export interface ExternalCallee {
+  name: string;     // alias used in source (e.g. 'http_get' or 'requests.get')
+  realName: string; // original exported name (e.g. 'get')
+  module: string;   // library name (e.g. 'requests', 'axios')
+}
+
 export interface FileGroup {
   fileName: string;
   x: number;
@@ -42,6 +49,8 @@ export const state = {
   targetDir: '' as string,
   nodes: [] as GraphNode[],
   edges: [] as GraphEdge[],
+  /** nodeId → list of external library callees (for popover display only) */
+  externalCallMap: new Map<string, ExternalCallee[]>(),
   fileGroups: [] as FileGroup[],
   groupLayoutModes: new Map<string, string>(),
 

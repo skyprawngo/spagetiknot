@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 import { createFlowPanel } from './webviewPanel';
 import { runIndexing, buildDirItems } from './indexer';
 import { attachMessageHandler } from './messageHandler';
-import { listSavedLayouts, loadLayout, saveLastSession, loadLastSession } from './storage';
+import { listSavedLayouts, loadLayout, loadLastSession, loadLastDirLayout } from './storage';
 import { FileWatcher } from './watcher';
 import { initLogger, log } from './logger';
 
@@ -80,10 +80,10 @@ async function openOrRevealPanel(context: vscode.ExtensionContext): Promise<void
   const lastSession = loadLastSession();
   if (lastSession?.targetDir) {
     log('Auto-loading last session:', lastSession.targetDir);
-    const savedLayout = lastSession.layoutName
-      ? loadLayout(lastSession.layoutName)
-      : undefined;
-    panelWatcher = await runIndexing(panel, lastSession.targetDir, panelWatcher, savedLayout ?? undefined);
+    const dirEntry  = loadLastDirLayout(lastSession.targetDir);
+    const savedLayout = dirEntry?.layoutName ? loadLayout(dirEntry.layoutName) : undefined;
+    const autoLayoutType = (!savedLayout && dirEntry?.layoutType) ? dirEntry.layoutType : undefined;
+    panelWatcher = await runIndexing(panel, lastSession.targetDir, panelWatcher, savedLayout ?? undefined, autoLayoutType);
     return;
   }
 

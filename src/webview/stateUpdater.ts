@@ -14,8 +14,8 @@
  * │ applySavedLayout        │ Overlay saved group/node positions onto current state│
  * └─────────────────────────┴──────────────────────────────────────────────────────┘
  */
-import { state, NODE_W, NODE_H, GraphNode, GraphEdge } from './state';
-import { applyGlobalLayout, layoutNodesInGroup } from './layout';
+import { state, NODE_W, NODE_H, GraphNode, GraphEdge, ExternalCallee } from './state';
+import { applyGlobalLayout, applyMultiRowStackerLayout, fitToScreen, layoutNodesInGroup } from './layout';
 import { clearFileColors, restoreFileColors } from './colors';
 import { resizeCanvas, draw } from './canvas';
 import { updateFileList } from './dashboard';
@@ -33,6 +33,7 @@ export function applyLoadData(msg: any): void {
   state.targetDir = msg.targetDir || '';
   state.nodes = (msg.functions || []).map(makeNode);
   state.edges = (msg.edges || []).map(makeEdge);
+  buildExternalCallMap(msg.externalCalls || []);
 
   // Auto-assign layout mode: 2-column for groups with 8+ functions
   const countByFile = new Map<string, number>();
@@ -47,6 +48,9 @@ export function applyLoadData(msg: any): void {
 
   if (msg.savedLayout) {
     applySavedLayout(msg.savedLayout);
+  } else if (msg.autoLayoutType) {
+    applyAutoLayoutType(msg.autoLayoutType);
+    fitToScreen();
   }
 
   updateFileList();
@@ -81,6 +85,7 @@ export function applyIncrementalUpdate(msg: any): void {
   // Rebuild from message
   state.nodes = (msg.functions || []).map(makeNode);
   state.edges = (msg.edges || []).map(makeEdge);
+  buildExternalCallMap(msg.externalCalls || []);
 
   // Restore positions for nodes whose ID survived the update
   for (const n of state.nodes) {
@@ -199,4 +204,25 @@ function makeEdge(e: any): GraphEdge {
     args:   e.args   || [],
     params: e.params || [],
   };
+}
+
+function applyAutoLayoutType(layoutType: string): void {
+  switch (layoutType) {
+    case 'stacker2':    applyMultiRowStackerLayout(2); break;
+    case 'stacker3':    applyMultiRowStackerLayout(3); break;
+    case 'stacker4':    applyMultiRowStackerLayout(4); break;
+    case '1col':        applyGlobalLayout(1); break;
+    case 'horizontal':  applyGlobalLayout(0); break;
+    case 'compact':     applyGlobalLayout(-1); break;
+    default:            applyGlobalLayout(2); break;
+  }
+}
+
+function buildExternalCallMap(raw: any[]): void {
+  state.externalCallMap.clear();
+  for (const c of raw) {
+    const list = state.externalCallMap.get(c.callerNodeId) || [];
+    list.push({ name: c.name, realName: c.realName, module: c.module } as ExternalCallee);
+    state.externalCallMap.set(c.callerNodeId, list);
+  }
 }

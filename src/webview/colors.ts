@@ -1,15 +1,12 @@
-const fileColors = new Map<string, string>();
+import { getTheme } from './theme';
 
-const AUTO_PALETTE = [
-  '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
-  '#ba68c8', '#4dd0e1', '#aed581', '#ff8a65',
-  '#f06292', '#7986cb', '#a1887f', '#90a4ae',
-];
+const fileColors = new Map<string, string>();
 
 /** Returns the current color for a file, auto-assigning one if not set. */
 export function colorForFile(fileName: string): string {
   if (!fileColors.has(fileName)) {
-    fileColors.set(fileName, AUTO_PALETTE[fileColors.size % AUTO_PALETTE.length]);
+    const palette = getTheme().palette;
+    fileColors.set(fileName, palette[fileColors.size % palette.length]);
   }
   return fileColors.get(fileName)!;
 }

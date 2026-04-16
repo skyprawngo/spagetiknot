@@ -9,7 +9,7 @@
 import { initCanvas, resizeCanvas } from './canvas';
 import { setupCanvasEvents } from './interaction';
 import { setupDashboard, renderDashSavedLayouts } from './dashboard';
-import { setupNodeContext } from './nodeContext';
+import { setupNodeContext, applyHoverResult } from './nodeContext';
 import { postMessage } from './messaging';
 import { applyLoadData, applyIncrementalUpdate } from './stateUpdater';
 import { renderDirPicker, renderSavedLayouts } from './dirPickerUI';
@@ -84,6 +84,10 @@ window.addEventListener('message', (event: MessageEvent) => {
 
     case 'incrementalUpdate':
       applyIncrementalUpdate(msg);
+      break;
+
+    case 'hoverResult':
+      applyHoverResult(msg.requestId, msg.content);
       break;
   }
 });

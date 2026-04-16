@@ -6,6 +6,14 @@ body {
   overflow: hidden;
   width: 100vw;
   height: 100vh;
+
+  /* ── SpagetiKnot semantic palette ──────────────────────────────────────── */
+  /* Driven by VSCode chart tokens so graph colours track the active theme.   */
+  --sk-accent-selected: var(--vscode-charts-yellow,  #ffd54f);
+  --sk-accent-callee:   var(--vscode-charts-green,   #81c784);
+  --sk-accent-caller:   var(--vscode-charts-blue,    #4fc3f7);
+  --sk-accent-search:   var(--vscode-charts-orange,  #ffb74d);
+  --sk-error:           var(--vscode-errorForeground, #e57373);
 }
 #toolbar {
   position: fixed;
@@ -91,6 +99,7 @@ canvas {
   font-size: 12px;
   border-radius: 6px 6px 0 0;
   user-select: none;
+  color: var(--vscode-titleBar-activeForeground, #ccc);
 }
 #dash-header .close-btn {
   margin-left: auto;
@@ -196,7 +205,7 @@ canvas {
   cursor: pointer;
   font-size: 13px;
 }
-#dir-picker .layout-item .delete-btn:hover { opacity: 1; color: #e57373; }
+#dir-picker .layout-item .delete-btn:hover { opacity: 1; color: var(--sk-error, #e57373); }
 
 /* Dashboard saved layouts */
 #dash-saved-layouts .dash-layout-item {
@@ -207,12 +216,12 @@ canvas {
   margin-bottom: 2px;
   border-radius: 3px;
   cursor: pointer;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--vscode-panel-border, #444);
+  background: var(--vscode-list-inactiveSelectionBackground, rgba(255,255,255,0.03));
 }
 #dash-saved-layouts .dash-layout-item:hover {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.15);
+  background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.08));
+  border-color: var(--vscode-focusBorder, rgba(255,255,255,0.15));
 }
 #dash-saved-layouts .dash-layout-name {
   flex: 1;
@@ -237,7 +246,7 @@ canvas {
   cursor: pointer;
   flex-shrink: 0;
 }
-#dash-saved-layouts .dash-layout-item .del:hover { opacity: 1; color: #e57373; }
+#dash-saved-layouts .dash-layout-item .del:hover { opacity: 1; color: var(--sk-error, #e57373); }
 
 /* Edge info popover */
 #edge-info {
@@ -260,8 +269,8 @@ canvas {
   margin-bottom: 3px;
   font-size: 11px;
 }
-#edge-info .param { color: #81c784; }
-#edge-info .arg { color: #4fc3f7; }
+#edge-info .param { color: var(--sk-accent-callee, #81c784); }
+#edge-info .arg   { color: var(--sk-accent-caller, #4fc3f7); }
 #edge-info .arrow { opacity: 0.5; }
 
 /* ── Node context popover (3-column, stackable) ── */
@@ -294,8 +303,8 @@ canvas {
 .nc-body {
   display: grid;
   grid-template-columns: 1fr 160px 1fr;
-  min-height: 120px;
-  max-height: 55vh;
+  grid-template-rows: minmax(120px, 55vh);
+  overflow: hidden;
 }
 
 /* Column shared */
@@ -323,10 +332,11 @@ canvas {
   align-items: center;
   gap: 4px;
 }
-.nc-col-label.caller { color: #4fc3f7; }
-.nc-col-label.callee { color: #81c784; }
+.nc-col-label.caller { color: var(--sk-accent-caller, #4fc3f7); }
+.nc-col-label.callee { color: var(--sk-accent-callee, #81c784); }
 .nc-col-label span {
-  background: rgba(255,255,255,0.1);
+  background: var(--vscode-badge-background, rgba(255,255,255,0.1));
+  color: var(--vscode-badge-foreground, inherit);
   border-radius: 8px;
   padding: 0 5px;
   font-size: 10px;
@@ -338,7 +348,7 @@ canvas {
   align-items: flex-start;
   justify-content: flex-start;
   text-align: left;
-  background: rgba(255,255,255,0.02);
+  background: var(--vscode-editor-inactiveSelectionBackground, rgba(255,255,255,0.02));
   border-radius: 0;
 }
 .nc-center-top {
@@ -346,7 +356,7 @@ canvas {
 }
 .nc-center-divider {
   width: 100%;
-  border-top: 1px solid rgba(255,255,255,0.1);
+  border-top: 1px solid var(--vscode-panel-border, rgba(255,255,255,0.1));
   margin: 8px 0;
 }
 .nc-center-bottom {
@@ -356,7 +366,7 @@ canvas {
 .nc-title {
   font-weight: 700;
   font-size: 13px;
-  color: #ffd54f;
+  color: var(--sk-accent-selected, #ffd54f);
   font-family: monospace;
   word-break: break-all;
   margin-bottom: 4px;
@@ -402,9 +412,9 @@ canvas {
   transition: background 0.1s;
   min-width: 0;
 }
-.nc-item:hover { background: rgba(255,255,255,0.07); }
-.nc-item.caller .nc-fn-name { color: #4fc3f7; }
-.nc-item.callee .nc-fn-name { color: #81c784; }
+.nc-item:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,0.07)); }
+.nc-item.caller .nc-fn-name { color: var(--sk-accent-caller, #4fc3f7); }
+.nc-item.callee .nc-fn-name { color: var(--sk-accent-callee, #81c784); }
 .nc-fn-name {
   font-family: monospace;
   font-size: 11px;
@@ -425,5 +435,96 @@ canvas {
   padding: 4px 5px;
   font-size: 11px;
   opacity: 0.3;
+  font-style: italic;
+}
+
+/* ── External callee items ── */
+.nc-ext-divider {
+  border-top: 1px dashed rgba(255,255,255,0.12);
+  margin: 4px 2px;
+}
+/* External items: muted gray — NOT the callee accent color.
+   No .callee class on external items, so .nc-item.callee rule doesn't fire. */
+.nc-item-ext .nc-fn-name {
+  color: var(--vscode-editor-foreground, #ccc);
+  opacity: 0.5;
+}
+.nc-ext-badge {
+  font-family: monospace;
+  font-size: 9px;
+  opacity: 0.35;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 3px;
+  padding: 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: flex-start;
+}
+
+/* ── 1-column external-function popover ── */
+.nc-ext-popover {
+  min-width: 240px !important;
+  max-width: 360px !important;
+}
+.nc-ext-body {
+  padding: 14px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nc-ext-module-badge {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 10px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  padding: 1px 7px;
+  opacity: 0.7;
+  align-self: flex-start;
+}
+.nc-ext-fn-name {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--vscode-editor-foreground, #ccc);
+  word-break: break-all;
+}
+.nc-ext-alias {
+  font-size: 11px;
+  opacity: 0.5;
+}
+.nc-ext-alias code {
+  font-family: monospace;
+  opacity: 0.8;
+}
+.nc-ext-note {
+  font-size: 10px;
+  opacity: 0.3;
+  font-style: italic;
+  margin-top: 2px;
+}
+/* Hover info area — loaded async from VS Code hover provider */
+.nc-ext-hover {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-editor-foreground, #ccc);
+  opacity: 0.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.nc-ext-hover.loading {
+  opacity: 0.3;
+  font-style: italic;
+}
+.nc-ext-hover.empty {
+  opacity: 0.2;
   font-style: italic;
 }
